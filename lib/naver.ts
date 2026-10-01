@@ -141,10 +141,12 @@ export async function getNaverSnapshot() {
   );
   const keywords = keywordLists.flat();
 
-  const ids = [...campaigns.map((c) => c.nccCampaignId), ...adgroups.map((g) => g.nccAdgroupId)];
+  // /stats 는 한 요청 안의 ID가 모두 같은 종류여야 하므로 캠페인·광고그룹을 따로 조회
+  const idGroups = [campaigns.map((c) => c.nccCampaignId), adgroups.map((g) => g.nccAdgroupId)].filter((g) => g.length);
   const stats: Partial<Record<Preset, Record<string, NaverStat>>> = {};
-  if (ids.length) {
-    for (const p of STAT_PRESETS) stats[p] = await safe(`성과(${p})`, () => getStats(ids, p), {});
+  if (idGroups.length) {
+    for (const p of STAT_PRESETS)
+      stats[p] = await safe(`성과(${p})`, async () => Object.assign({}, ...(await Promise.all(idGroups.map((ids) => getStats(ids, p))))), {});
   }
 
   return { fetchedAt: new Date().toISOString(), bizmoney, campaigns, adgroups, keywords, stats, errors };

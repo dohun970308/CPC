@@ -17,4 +17,5 @@ export function middleware(req: NextRequest) {
   });
 }
 
-export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"] };
+// /privacy 는 구글 OAuth 브랜딩 등록용이라 비밀번호 없이 공개
+export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico|privacy$).*)"] };

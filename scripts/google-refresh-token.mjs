@@ -4,17 +4,22 @@
 import http from "node:http";
 import crypto from "node:crypto";
 
-import readline from "node:readline/promises";
+import readline from "node:readline";
 
 // 환경변수가 없거나 예시 문구 그대로면 직접 붙여넣도록 물어봄
 const looksReal = (v) => v && /^[\x21-\x7e]+$/.test(v);
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const lines = rl[Symbol.asyncIterator]();
+const ask = async (q) => {
+  process.stdout.write(q);
+  return ((await lines.next()).value ?? "").trim();
+};
 const clientId = looksReal(process.env.GOOGLE_ADS_CLIENT_ID)
   ? process.env.GOOGLE_ADS_CLIENT_ID
-  : (await rl.question("클라이언트 ID를 붙여넣고 Enter: ")).trim();
+  : await ask("클라이언트 ID를 붙여넣고 Enter: ");
 const clientSecret = looksReal(process.env.GOOGLE_ADS_CLIENT_SECRET)
   ? process.env.GOOGLE_ADS_CLIENT_SECRET
-  : (await rl.question("클라이언트 보안 비밀번호를 붙여넣고 Enter: ")).trim();
+  : await ask("클라이언트 보안 비밀번호를 붙여넣고 Enter: ");
 rl.close();
 if (!clientId.endsWith(".apps.googleusercontent.com") || !clientSecret) {
   console.error("클라이언트 ID는 '.apps.googleusercontent.com' 으로 끝나야 합니다. 다시 확인하세요.");

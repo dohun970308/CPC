@@ -4,10 +4,20 @@
 import http from "node:http";
 import crypto from "node:crypto";
 
-const clientId = process.env.GOOGLE_ADS_CLIENT_ID;
-const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET;
-if (!clientId || !clientSecret) {
-  console.error("GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET 를 먼저 설정하세요.");
+import readline from "node:readline/promises";
+
+// 환경변수가 없거나 예시 문구 그대로면 직접 붙여넣도록 물어봄
+const looksReal = (v) => v && /^[\x21-\x7e]+$/.test(v);
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const clientId = looksReal(process.env.GOOGLE_ADS_CLIENT_ID)
+  ? process.env.GOOGLE_ADS_CLIENT_ID
+  : (await rl.question("클라이언트 ID를 붙여넣고 Enter: ")).trim();
+const clientSecret = looksReal(process.env.GOOGLE_ADS_CLIENT_SECRET)
+  ? process.env.GOOGLE_ADS_CLIENT_SECRET
+  : (await rl.question("클라이언트 보안 비밀번호를 붙여넣고 Enter: ")).trim();
+rl.close();
+if (!clientId.endsWith(".apps.googleusercontent.com") || !clientSecret) {
+  console.error("클라이언트 ID는 '.apps.googleusercontent.com' 으로 끝나야 합니다. 다시 확인하세요.");
   process.exit(1);
 }
 const PORT = 8765;

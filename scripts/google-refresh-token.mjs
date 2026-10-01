@@ -1,5 +1,5 @@
 // 구글 광고 API 리프레시 토큰 발급 (Windows PowerShell에서 실행)
-//   $env:GOOGLE_ADS_CLIENT_ID="클라이언트ID"; $env:GOOGLE_ADS_CLIENT_SECRET="클라이언트보안비밀번호"; npm run google-token
+//   npm run google-token  (실행하면 클라이언트 ID와 보안 비밀번호를 물어봅니다)
 // OAuth 클라이언트 유형은 '데스크톱 앱'이어야 합니다. 토큰은 이 PC 화면에만 출력되고 어디에도 저장되지 않습니다.
 import http from "node:http";
 import crypto from "node:crypto";

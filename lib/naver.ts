@@ -18,7 +18,6 @@ async function call<T>(uri: string, query: Query = {}): Promise<T> {
   const apiKey = process.env.NAVER_API_KEY!;
   const secret = process.env.NAVER_SECRET_KEY!;
   const customer = process.env.NAVER_CUSTOMER_ID!;
-  const ts = String(Date.now());
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) {
     if (v === undefined) continue;
@@ -26,20 +25,28 @@ async function call<T>(uri: string, query: Query = {}): Promise<T> {
     else qs.append(k, v);
   }
   const url = `${BASE_URL}${uri}${qs.size ? `?${qs}` : ""}`;
-  const res = await fetch(url, {
-    method: "GET",
-    cache: "no-store",
-    headers: {
-      "Content-Type": "application/json; charset=UTF-8",
-      "X-Timestamp": ts,
-      "X-API-KEY": apiKey,
-      "X-Customer": customer,
-      "X-Signature": naverSignature(ts, "GET", uri, secret),
-    },
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`네이버 ${uri} ${res.status}: ${text.slice(0, 300)}`);
-  return (text ? JSON.parse(text) : null) as T;
+  // 키워드 성과까지 조회하면 요청이 많아져 429(요청 과다)가 날 수 있으므로 잠시 쉬었다가 다시 시도
+  for (let attempt = 1; ; attempt++) {
+    const ts = String(Date.now());
+    const res = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json; charset=UTF-8",
+        "X-Timestamp": ts,
+        "X-API-KEY": apiKey,
+        "X-Customer": customer,
+        "X-Signature": naverSignature(ts, "GET", uri, secret),
+      },
+    });
+    const text = await res.text();
+    if (res.status === 429 && attempt < 4) {
+      await new Promise((r) => setTimeout(r, 700 * attempt));
+      continue;
+    }
+    if (!res.ok) throw new Error(`네이버 ${uri} ${res.status}: ${text.slice(0, 300)}`);
+    return (text ? JSON.parse(text) : null) as T;
+  }
 }
 
 export type NaverCampaign = {
@@ -85,6 +92,7 @@ export type NaverStat = {
   ctr?: number;
   cpc?: number;
   ccnt?: number;
+  avgRnk?: number; // 평균 노출 순위
 };
 
 export const STAT_PRESETS = ["today", "yesterday", "last7days"] as const;
@@ -104,19 +112,26 @@ async function pool<T, R>(items: T[], size: number, fn: (x: T) => Promise<R>): P
   return out;
 }
 
-async function getStats(ids: string[], preset: Preset): Promise<Record<string, NaverStat>> {
-  const map: Record<string, NaverStat> = {};
-  for (let i = 0; i < ids.length; i += 50) {
-    const chunk = ids.slice(i, i + 50);
-    const r = await call<{ data?: NaverStat[] }>("/stats", {
-      ids: chunk,
-      fields: JSON.stringify(["impCnt", "clkCnt", "salesAmt", "ctr", "cpc", "ccnt"]),
-      datePreset: preset,
-    });
-    for (const s of r?.data ?? []) map[s.id] = s;
+const BASE_FIELDS = ["impCnt", "clkCnt", "salesAmt", "ctr", "cpc", "ccnt"];
+// 평균 노출 순위(avgRnk)를 API가 거부하면(400) 이후로는 빼고 조회해서 나머지 성과는 계속 보이게 한다
+let rankSupported = true;
+
+async function getStatsChunk(ids: string[], preset: Preset): Promise<NaverStat[]> {
+  const fetchWith = (fields: string[]) =>
+    call<{ data?: NaverStat[] }>("/stats", { ids, fields: JSON.stringify(fields), datePreset: preset });
+  if (rankSupported) {
+    try {
+      return (await fetchWith([...BASE_FIELDS, "avgRnk"]))?.data ?? [];
+    } catch (e) {
+      if (!/ 400:/.test((e as Error).message)) throw e;
+      rankSupported = false;
+    }
   }
-  return map;
+  return (await fetchWith(BASE_FIELDS))?.data ?? [];
 }
+
+const chunks = <T,>(xs: T[], size: number) =>
+  Array.from({ length: Math.ceil(xs.length / size) }, (_, i) => xs.slice(i * size, i * size + size));
 
 export async function getNaverSnapshot() {
   const errors: string[] = [];
@@ -141,15 +156,21 @@ export async function getNaverSnapshot() {
   );
   const keywords = keywordLists.flat();
 
-  // /stats 는 한 요청 안의 ID가 모두 같은 종류여야 하므로 캠페인·광고그룹을 따로 조회
-  const idGroups = [campaigns.map((c) => c.nccCampaignId), adgroups.map((g) => g.nccAdgroupId)].filter((g) => g.length);
+  // /stats 는 한 요청 안의 ID가 모두 같은 종류여야 하므로 캠페인·광고그룹·키워드를 따로, 50개씩 나눠 조회
+  const idGroups = [
+    campaigns.map((c) => c.nccCampaignId),
+    adgroups.map((g) => g.nccAdgroupId),
+    keywords.map((k) => k.nccKeywordId),
+  ].filter((g) => g.length);
+  const jobs = STAT_PRESETS.flatMap((p) => idGroups.flatMap((ids) => chunks(ids, 50).map((c) => ({ p, ids: c }))));
+  const results = await pool(jobs, 4, (j) => safe(`성과(${j.p})`, () => getStatsChunk(j.ids, j.p), [] as NaverStat[]));
   const stats: Partial<Record<Preset, Record<string, NaverStat>>> = {};
-  if (idGroups.length) {
-    for (const p of STAT_PRESETS)
-      stats[p] = await safe(`성과(${p})`, async () => Object.assign({}, ...(await Promise.all(idGroups.map((ids) => getStats(ids, p))))), {});
-  }
+  jobs.forEach((j, i) => {
+    const map = (stats[j.p] ??= {});
+    for (const s of results[i]) map[s.id] = s;
+  });
 
-  return { fetchedAt: new Date().toISOString(), bizmoney, campaigns, adgroups, keywords, stats, errors };
+  return { fetchedAt: new Date().toISOString(), bizmoney, campaigns, adgroups, keywords, stats, errors: [...new Set(errors)] };
 }
 
 export type NaverSnapshot = Awaited<ReturnType<typeof getNaverSnapshot>>;

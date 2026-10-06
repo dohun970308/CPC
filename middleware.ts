@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 // DASHBOARD_PASSWORD 가 있으면 브라우저 기본 로그인 창으로 보호 (아이디는 아무거나)
 // 홈(앱 소개)과 개인정보처리방침은 구글 OAuth 브랜드 인증 요건 때문에 비밀번호 없이 공개
-const PUBLIC_PATHS = new Set(["/", "/privacy"]);
+const PUBLIC_PATHS = new Set(["/", "/privacy", "/robots.txt", "/sitemap.xml"]);
 
 export function middleware(req: NextRequest) {
   const pw = process.env.DASHBOARD_PASSWORD;

@@ -2,12 +2,19 @@
 // 개발자 토큰은 2026-09-09 지원 종료. 접근 수준은 OAuth 클라이언트를 만든 Google Cloud 프로젝트 기준.
 // https://developers.google.com/google-ads/api/docs/api-policy/developer-token
 
-export function googleConfigured() {
+// API 승인 전에는 구글 애즈 스크립트가 채우는 비공개 시트(lib/google-sheet.ts)를 대신 쓴다.
+import { getGoogleSheetSnapshot, sheetConfigured } from "./google-sheet";
+
+function apiConfigured() {
   const e = process.env;
   return Boolean(
     e.GOOGLE_ADS_CLIENT_ID && e.GOOGLE_ADS_CLIENT_SECRET &&
       e.GOOGLE_ADS_REFRESH_TOKEN && e.GOOGLE_ADS_CUSTOMER_ID,
   );
+}
+
+export function googleConfigured() {
+  return sheetConfigured() || apiConfigured();
 }
 
 const digits = (s?: string) => (s ?? "").replace(/\D/g, "");
@@ -64,6 +71,8 @@ async function search(token: string, query: string): Promise<any[]> {
 export const G_RANGES = { today: "TODAY", yesterday: "YESTERDAY", last7days: "LAST_7_DAYS" } as const;
 export type GRange = keyof typeof G_RANGES;
 
+export type GMetrics = { impressions: number; clicks: number; cost: number; conversions: number };
+
 export type GoogleCampaign = {
   id: string;
   name: string;
@@ -71,11 +80,61 @@ export type GoogleCampaign = {
   primaryStatus?: string;
   primaryStatusReasons?: string[];
   channel?: string;
+  bidding?: string;
   budget?: number; // 원
-  metrics: Partial<Record<GRange, { impressions: number; clicks: number; cost: number; conversions: number }>>;
+  // 최근 7일 검색 노출 점유율(0~1): 받은 노출, 예산 부족으로 놓친 비율, 순위 때문에 놓친 비율
+  impressionShare?: { share?: number; budgetLost?: number; rankLost?: number };
+  metrics: Partial<Record<GRange, GMetrics>>;
 };
 
-export async function getGoogleSnapshot() {
+export type GoogleAdgroup = { id: string; campaignId: string; name: string; status: string; cpcBid?: number; metrics: Partial<Record<GRange, GMetrics>> };
+
+export type GoogleKeyword = {
+  id: string;
+  adgroupId: string;
+  campaignId: string;
+  text: string;
+  matchType: string;
+  status: string;
+  servingStatus?: string;
+  approvalStatus?: string;
+  qualityScore?: number;
+  cpcBid?: number;
+  metrics: Partial<Record<GRange, GMetrics>>;
+};
+
+export type GoogleSearchTerm = GMetrics & { term: string; status: string; campaign: string; adgroup: string };
+export type GoogleSegment = GMetrics & { range: GRange; key: string };
+
+export type GoogleSnapshot = {
+  source: "api" | "sheet";
+  fetchedAt: string;
+  account: { name?: string; currency?: string; timeZone?: string; status?: string } | null;
+  campaigns: GoogleCampaign[];
+  adgroups: GoogleAdgroup[];
+  keywords: GoogleKeyword[];
+  searchTerms: GoogleSearchTerm[];
+  devices: GoogleSegment[];
+  hours: GoogleSegment[];
+  errors: string[];
+};
+
+export async function getGoogleSnapshot(): Promise<GoogleSnapshot> {
+  if (sheetConfigured()) {
+    try {
+      return await getGoogleSheetSnapshot();
+    } catch (e) {
+      if (!apiConfigured()) return { ...emptySnapshot("sheet"), errors: [(e as Error).message] };
+    }
+  }
+  return getGoogleApiSnapshot();
+}
+
+function emptySnapshot(source: GoogleSnapshot["source"]): GoogleSnapshot {
+  return { source, fetchedAt: new Date().toISOString(), account: null, campaigns: [], adgroups: [], keywords: [], searchTerms: [], devices: [], hours: [], errors: [] };
+}
+
+async function getGoogleApiSnapshot(): Promise<GoogleSnapshot> {
   const errors: string[] = [];
   let account: { name?: string; currency?: string; timeZone?: string; status?: string } | null = null;
   const campaigns = new Map<string, GoogleCampaign>();
@@ -125,7 +184,5 @@ export async function getGoogleSnapshot() {
   } catch (e) {
     errors.push((e as Error).message);
   }
-  return { fetchedAt: new Date().toISOString(), account, campaigns: [...campaigns.values()], errors };
+  return { ...emptySnapshot("api"), account, campaigns: [...campaigns.values()], errors };
 }
-
-export type GoogleSnapshot = Awaited<ReturnType<typeof getGoogleSnapshot>>;

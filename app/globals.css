@@ -89,3 +89,7 @@ tr.kw td { font-size: 13px; }
 tr.kw td:first-child { padding-left: 44px; }
 .caret { display: inline-block; width: 14px; color: var(--muted); }
 .more { text-align: center; margin-top: 10px; }
+h3 { font-size: 15px; margin: 22px 0 10px; }
+td.warn { color: var(--warn); font-weight: 600; }
+.bar { display: inline-block; height: 8px; min-width: 2px; border-radius: 4px; background: var(--google); vertical-align: middle; }
+td:has(> .bar) { width: 30%; min-width: 120px; }

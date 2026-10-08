@@ -29,6 +29,18 @@ Vercel → 이 프로젝트 → **Settings → Environment Variables** 에 아�
 > 구글 개발자 토큰은 2026-09-09에 지원이 종료되었습니다. API 접근 수준은 OAuth 클라이언트를 만든 **Google Cloud 프로젝트** 기준이며,
 > Google Cloud 콘솔의 **Google Ads API 개요 페이지**에서 신청·관리합니다. ([공식 문서](https://developers.google.com/google-ads/api/docs/api-policy/developer-token))
 
+## 구글 데이터: 구글 애즈 스크립트 + 비공개 시트 (API 승인 전 방식)
+Google Ads API 등급(Explorer 이상)이 승인되기 전에는 이 방식을 씁니다. 두 값이 있으면 API보다 우선합니다.
+
+1. 구글 애즈 > 도구 > 일괄 작업 > 스크립트에 `scripts/google-ads-to-sheet.js` 를 붙여넣고 매시간 실행 예약
+2. 스크립트가 내 드라이브에 비공개 시트를 만들고, 대시보드용 **서비스 계정에만** 보기 권한을 줌
+3. 대시보드는 서비스 계정으로 그 시트를 읽음 (Google Cloud에서 **Google Sheets API** 사용 설정 필요)
+
+| 이름 | 값 |
+|---|---|
+| `GOOGLE_SA_KEY_JSON` | 서비스 계정 키 파일(JSON) 내용 전체 |
+| `GOOGLE_ADS_SHEET_ID` | 스크립트 실행 로그에 나온 시트 ID |
+
 ## 구글 리프레시 토큰 발급 (Windows PowerShell)
 Node.js가 설치돼 있어야 합니다. 저장소를 받은 폴더에서:
 

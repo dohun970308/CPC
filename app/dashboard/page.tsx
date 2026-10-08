@@ -418,42 +418,237 @@ function KeywordRanking({ data, range, sort }: { data: any; range: Range; sort: 
   );
 }
 
+const G_STATUS: Record<string, string> = { ENABLED: "켜짐", PAUSED: "일시중지", REMOVED: "삭제됨" };
+const G_PRIMARY: Record<string, string> = {
+  ELIGIBLE: "노출 가능", PAUSED: "일시중지", LIMITED: "제한됨", NOT_ELIGIBLE: "노출 불가", PENDING: "대기 중",
+  ENDED: "종료", MISCONFIGURED: "설정 오류", LEARNING: "학습 중",
+};
+const G_MATCH: Record<string, string> = { EXACT: "완전", PHRASE: "구문", BROAD: "확장" };
+const G_DEVICE: Record<string, string> = { MOBILE: "모바일", DESKTOP: "PC", TABLET: "태블릿", CONNECTED_TV: "TV", OTHER: "기타" };
+const share = (v?: number) => (v == null ? "-" : `${Math.round(v * 100)}%`);
+const gVal = (x: any, range: Range, f: keyof typeof GOOGLE_FIELD) => x.metrics?.[range]?.[GOOGLE_FIELD[f]];
+
+function GStatus({ status, primary }: { status?: string; primary?: string }) {
+  if (status === "PAUSED") return <span className="off">일시중지</span>;
+  if (primary) return <span className={primary === "ELIGIBLE" ? "on" : ""}>{G_PRIMARY[primary] ?? primary}</span>;
+  return <span className={status === "ENABLED" ? "on" : ""}>{G_STATUS[status ?? ""] ?? status ?? "-"}</span>;
+}
+
+function GoogleTitle({ data }: { data: any }) {
+  return (
+    <h2>
+      <span className="dot" style={{ background: "var(--google)" }} />
+      구글 검색광고{data?.account?.name ? ` · ${data.account.name}` : ""}
+      {data?.source === "sheet" && <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}> · 구글 애즈 스크립트 시트 (1시간마다 갱신)</span>}
+    </h2>
+  );
+}
+
 function GoogleSection({ data, range, sort }: { data: any; range: Range; sort: SortKey }) {
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const kwByGroup = useMemo(() => {
+    const m = new Map<string, any[]>();
+    for (const k of data?.keywords ?? []) m.set(k.adgroupId, [...(m.get(k.adgroupId) ?? []), k]);
+    return m;
+  }, [data]);
+
+  if (!data) return <section className="card"><GoogleTitle data={data} /><div className="empty">불러오는 중…</div></section>;
+  if (!data.configured)
+    return (
+      <section className="card">
+        <GoogleTitle data={data} />
+        <NotConfigured name="구글" keys={["GOOGLE_ADS_SHEET_ID", "GOOGLE_SA_KEY_JSON"]} />
+      </section>
+    );
+  if (data.campaigns.length === 0)
+    return (
+      <section className="card">
+        <GoogleTitle data={data} />
+        <div className="empty">캠페인이 없거나 불러오지 못했습니다. 위 자동 점검의 오류를 확인하세요.</div>
+      </section>
+    );
+
+  const adgroups: any[] = data.adgroups ?? [];
+  const keywords: any[] = data.keywords ?? [];
+  const allOpen = adgroups.length > 0 && open.size === adgroups.length;
+  const toggle = (id: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const tot = data.campaigns.reduce(
+    (a: any, c: any) => {
+      const m = c.metrics?.[range] ?? {};
+      return { clk: a.clk + (m.clicks ?? 0), cost: a.cost + (m.cost ?? 0) };
+    },
+    { clk: 0, cost: 0 },
+  );
+  const activeKw = keywords.filter((k) => k.status === "ENABLED");
+  const shownKw = activeKw.filter((k) => (k.metrics?.[range]?.impressions ?? 0) > 0).length;
+  const qs = activeKw.filter((k) => k.qualityScore != null);
+  const avgQs = qs.length ? qs.reduce((a, k) => a + k.qualityScore, 0) / qs.length : undefined;
+
   return (
     <section className="card">
-      <h2><span className="dot" style={{ background: "var(--google)" }} />구글 검색광고{data?.account?.name ? ` · ${data.account.name}` : ""}</h2>
-      {!data ? (
-        <div className="empty">불러오는 중…</div>
-      ) : !data.configured ? (
-        <NotConfigured name="구글" keys={["GOOGLE_ADS_CLIENT_ID", "GOOGLE_ADS_CLIENT_SECRET", "GOOGLE_ADS_REFRESH_TOKEN", "GOOGLE_ADS_CUSTOMER_ID"]} />
-      ) : data.campaigns.length === 0 ? (
-        <div className="empty">캠페인이 없거나 불러오지 못했습니다. 위 자동 점검의 API 오류를 확인하세요.</div>
-      ) : (
+      <GoogleTitle data={data} />
+      <div className="kpis">
+        <Kpi label="캠페인 (켜짐/전체)" value={`${data.campaigns.filter((c: any) => c.status === "ENABLED").length} / ${data.campaigns.length}`} />
+        <Kpi label="광고그룹 (켜짐/전체)" value={adgroups.length ? `${adgroups.filter((g) => g.status === "ENABLED").length} / ${adgroups.length}` : "-"} />
+        <Kpi label={`노출된 키워드 / 켜진 키워드 · ${RANGE_LABEL[range]}`} value={keywords.length ? `${n(shownKw)} / ${n(activeKw.length)}` : "-"} />
+        <Kpi label="평균 품질평가점수" value={avgQs == null ? "-" : `${avgQs.toFixed(1)} / 10`} />
+        <Kpi label={`구글 클릭 · ${RANGE_LABEL[range]}`} value={n(tot.clk)} />
+        <Kpi label={`구글 광고비 · ${RANGE_LABEL[range]}`} value={won(tot.cost)} />
+      </div>
+      {adgroups.length > 0 && (
+        <div className="toolbar">
+          <span className="muted">광고그룹 줄을 누르면 그 안의 키워드가 펼쳐집니다. 노출 점유율은 최근 7일 기준입니다.</span>
+          <button onClick={() => setOpen(allOpen ? new Set() : new Set(adgroups.map((g) => g.id)))}>
+            {allOpen ? "키워드 모두 접기" : "키워드 모두 펼치기"}
+          </button>
+        </div>
+      )}
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th className="l">캠페인 › 광고그룹 › 키워드</th><th className="l">상태</th><th>하루예산</th><th>입찰가</th><th>품질</th>
+              <th>노출</th><th>클릭</th><th>CTR</th><th>평균 CPC</th><th>광고비</th><th>전환</th><th>노출 점유율</th><th>예산 손실</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortBy<any>(data.campaigns, sort, (c, f) => gVal(c, range, f)).map((c: any) => {
+              const m = c.metrics?.[range] ?? {};
+              const groups = sortBy<any>(adgroups.filter((g) => g.campaignId === c.id), sort, (g, f) => gVal(g, range, f));
+              return [
+                <tr key={c.id} className="camp">
+                  <td>{c.name}</td>
+                  <td className="l"><GStatus status={c.status} primary={c.primaryStatus} /></td>
+                  <td>{won(c.budget)}</td><td>-</td><td>-</td>
+                  <Cells imp={m.impressions} clk={m.clicks} cost={m.cost} conv={m.conversions} />
+                  <td>{share(c.impressionShare?.share)}</td>
+                  <td className={c.impressionShare?.budgetLost >= 0.2 ? "warn" : ""}>{share(c.impressionShare?.budgetLost)}</td>
+                </tr>,
+                ...groups.flatMap((g: any) => {
+                  const gm = g.metrics?.[range] ?? {};
+                  const kws: any[] = kwByGroup.get(g.id) ?? [];
+                  const isOpen = open.has(g.id);
+                  return [
+                    <tr key={g.id} className="sub clickable" onClick={() => toggle(g.id)} aria-expanded={isOpen}>
+                      <td><span className="caret">{isOpen ? "▾" : "▸"}</span>{g.name} <span className="muted">({kws.length})</span></td>
+                      <td className="l"><GStatus status={g.status} /></td>
+                      <td>-</td><td>{won(g.cpcBid)}</td><td>-</td>
+                      <Cells imp={gm.impressions} clk={gm.clicks} cost={gm.cost} conv={gm.conversions} />
+                      <td>-</td><td>-</td>
+                    </tr>,
+                    ...(isOpen
+                      ? kws.length === 0
+                        ? [<tr key={`${g.id}-empty`} className="kw"><td colSpan={13} className="l muted">키워드가 없습니다.</td></tr>]
+                        : sortBy<any>(kws, sort, (k, f) => gVal(k, range, f)).map((k: any) => {
+                            const km = k.metrics?.[range] ?? {};
+                            return (
+                              <tr key={k.id} className="kw">
+                                <td>{k.text} <span className="muted">{G_MATCH[k.matchType] ?? k.matchType}</span></td>
+                                <td className="l">
+                                  {k.approvalStatus === "DISAPPROVED" ? <span className="badge b-치명">비승인</span> : <GStatus status={k.status} />}
+                                </td>
+                                <td>-</td><td>{won(k.cpcBid)}</td>
+                                <td className={k.qualityScore != null && k.qualityScore <= 4 ? "warn" : ""}>{k.qualityScore ?? "-"}</td>
+                                <Cells imp={km.impressions} clk={km.clicks} cost={km.cost} conv={km.conversions} />
+                                <td>-</td><td>-</td>
+                              </tr>
+                            );
+                          })
+                      : []),
+                  ];
+                }),
+              ];
+            })}
+          </tbody>
+        </table>
+      </div>
+      <SearchTerms terms={data.searchTerms ?? []} sort={sort} />
+      <Segments devices={data.devices ?? []} hours={data.hours ?? []} range={range} />
+    </section>
+  );
+}
+
+// 고객이 실제로 검색한 단어 (최근 7일 고정)
+function SearchTerms({ terms, sort }: { terms: any[]; sort: SortKey }) {
+  const [limit, setLimit] = useState(20);
+  const [wasteOnly, setWasteOnly] = useState(false);
+  if (!terms.length) return null;
+  const key = sort === "default" ? "cost" : sort;
+  const rows = sortBy<any>(terms.filter((t) => !wasteOnly || (t.conversions === 0 && t.cost > 0)), key, (t, f) => t[GOOGLE_FIELD[f]]);
+  return (
+    <>
+      <h3>실제 검색어 · 최근 7일 · {SORT_LABEL[key]}</h3>
+      <div className="toolbar">
+        <label className="check">
+          <input type="checkbox" checked={wasteOnly} onChange={(e) => { setWasteOnly(e.target.checked); setLimit(20); }} />
+          비용만 쓰고 전환 0건인 검색어만
+        </label>
+        <span className="muted">{n(rows.length)}개 (광고비 상위 300개 중)</span>
+      </div>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr><th className="l">검색어</th><th className="l">캠페인 › 광고그룹</th><th>노출</th><th>클릭</th><th>CTR</th><th>평균 CPC</th><th>광고비</th><th>전환</th></tr>
+          </thead>
+          <tbody>
+            {rows.slice(0, limit).map((t: any, i: number) => (
+              <tr key={`${t.term}-${t.adgroup}-${i}`}>
+                <td className="l" style={{ fontWeight: 600 }}>{t.term}{t.status === "EXCLUDED" && <span className="muted"> (제외됨)</span>}</td>
+                <td className="l muted">{t.campaign} › {t.adgroup}</td>
+                <Cells imp={t.impressions} clk={t.clicks} cost={t.cost} conv={t.conversions} />
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rows.length > limit && <div className="more"><button onClick={() => setLimit(limit + 20)}>20개 더 보기 ({n(rows.length - limit)}개 남음)</button></div>}
+    </>
+  );
+}
+
+// 기기별·시간대별. 시트에는 오늘·최근 7일만 있으므로 '어제'를 고르면 최근 7일을 보여준다
+function Segments({ devices, hours, range }: { devices: any[]; hours: any[]; range: Range }) {
+  if (!devices.length && !hours.length) return null;
+  const r: Range = range === "yesterday" ? "last7days" : range;
+  const dev = devices.filter((d) => d.range === r).sort((a, b) => b.cost - a.cost);
+  const hr = hours.filter((h) => h.range === r).sort((a, b) => Number(a.key) - Number(b.key));
+  const maxClk = Math.max(1, ...hr.map((h) => h.clicks));
+  return (
+    <>
+      <h3>기기별 · 시간대별 · {RANGE_LABEL[r]}{range === "yesterday" ? " (어제 데이터는 없어 최근 7일 표시)" : ""}</h3>
+      <div className="tablewrap">
+        <table>
+          <thead><tr><th className="l">기기</th><th>노출</th><th>클릭</th><th>CTR</th><th>평균 CPC</th><th>광고비</th><th>전환</th></tr></thead>
+          <tbody>
+            {dev.map((d) => (
+              <tr key={d.key}><td className="l">{G_DEVICE[d.key] ?? d.key}</td><Cells imp={d.impressions} clk={d.clicks} cost={d.cost} conv={d.conversions} /></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {hr.length > 0 && (
         <div className="tablewrap">
           <table>
-            <thead>
-              <tr>
-                <th className="l">캠페인</th><th className="l">상태</th><th>하루예산</th>
-                <th>노출</th><th>클릭</th><th>CTR</th><th>평균 CPC</th><th>광고비</th><th>전환</th>
-              </tr>
-            </thead>
+            <thead><tr><th className="l">시간</th><th className="l">클릭 분포</th><th>노출</th><th>클릭</th><th>CTR</th><th>평균 CPC</th><th>광고비</th><th>전환</th></tr></thead>
             <tbody>
-              {sortBy<any>(data.campaigns, sort, (c, f) => c.metrics?.[range]?.[GOOGLE_FIELD[f]]).map((c: any) => {
-                const m = c.metrics?.[range] ?? {};
-                return (
-                  <tr key={c.id}>
-                    <td>{c.name}</td>
-                    <td className="l">{c.status === "PAUSED" ? <span className="off">일시중지</span> : <span className={c.primaryStatus === "ELIGIBLE" ? "on" : ""}>{c.primaryStatus ?? c.status}</span>}</td>
-                    <td>{won(c.budget)}</td>
-                    <Cells imp={m.impressions} clk={m.clicks} cost={m.cost} conv={m.conversions} />
-                  </tr>
-                );
-              })}
+              {hr.map((h) => (
+                <tr key={h.key}>
+                  <td className="l">{h.key}시</td>
+                  <td className="l"><span className="bar" style={{ width: `${(h.clicks / maxClk) * 100}%` }} /></td>
+                  <Cells imp={h.impressions} clk={h.clicks} cost={h.cost} conv={h.conversions} />
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       )}
-    </section>
+    </>
   );
 }
 

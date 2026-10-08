@@ -98,17 +98,18 @@ function main() {
         .concat(metricValues(r.metrics));
     }));
 
-  // 기기별·시간대별 (오늘, 최근 7일)
+  // 기기별·시간대별 (오늘, 최근 7일) — 대시보드에서 특정 캠페인을 뺄 수 있게 캠페인별로 기록
   var dev = [];
   var hour = [];
   ['today', 'last7days'].forEach(function (k) {
-    rowsOf('SELECT segments.device, ' + metricFields() + ' FROM customer WHERE segments.date DURING ' + RANGES[k])
-      .forEach(function (r) { dev.push([k, r.segments.device].concat(metricValues(r.metrics))); });
-    rowsOf('SELECT segments.hour, ' + metricFields() + ' FROM customer WHERE segments.date DURING ' + RANGES[k])
-      .forEach(function (r) { hour.push([k, r.segments.hour].concat(metricValues(r.metrics))); });
+    var where = ' FROM campaign WHERE segments.date DURING ' + RANGES[k] + ' AND metrics.impressions > 0';
+    rowsOf('SELECT campaign.id, segments.device, ' + metricFields() + where)
+      .forEach(function (r) { dev.push([k, r.campaign.id, r.segments.device].concat(metricValues(r.metrics))); });
+    rowsOf('SELECT campaign.id, segments.hour, ' + metricFields() + where)
+      .forEach(function (r) { hour.push([k, r.campaign.id, r.segments.hour].concat(metricValues(r.metrics))); });
   });
-  writeTab(ss, 'devices', ['range', 'device'].concat(M), dev);
-  writeTab(ss, 'hours', ['range', 'hour'].concat(M), hour);
+  writeTab(ss, 'devices', ['range', 'campaign_id', 'device'].concat(M), dev);
+  writeTab(ss, 'hours', ['range', 'campaign_id', 'hour'].concat(M), hour);
 
   // 메타 (마지막에 써서 '갱신 시각'이 실제 완료 시각이 되게)
   writeTab(ss, 'meta', ['key', 'value'], [

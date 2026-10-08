@@ -616,8 +616,18 @@ function SearchTerms({ terms, sort }: { terms: any[]; sort: SortKey }) {
 function Segments({ devices, hours, range }: { devices: any[]; hours: any[]; range: Range }) {
   if (!devices.length && !hours.length) return null;
   const r: Range = range === "yesterday" ? "last7days" : range;
-  const dev = devices.filter((d) => d.range === r).sort((a, b) => b.cost - a.cost);
-  const hr = hours.filter((h) => h.range === r).sort((a, b) => Number(a.key) - Number(b.key));
+  // 캠페인별 행을 기기·시간 단위로 합산
+  const sum = (rows: any[]) => {
+    const m = new Map<string, any>();
+    for (const x of rows.filter((x) => x.range === r)) {
+      const a = m.get(x.key) ?? { key: x.key, impressions: 0, clicks: 0, cost: 0, conversions: 0 };
+      a.impressions += x.impressions; a.clicks += x.clicks; a.cost += x.cost; a.conversions += x.conversions;
+      m.set(x.key, a);
+    }
+    return [...m.values()];
+  };
+  const dev = sum(devices).sort((a, b) => b.cost - a.cost);
+  const hr = sum(hours).sort((a, b) => Number(a.key) - Number(b.key));
   const maxClk = Math.max(1, ...hr.map((h) => h.clicks));
   return (
     <>

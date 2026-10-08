@@ -104,7 +104,8 @@ export type GoogleKeyword = {
 };
 
 export type GoogleSearchTerm = GMetrics & { term: string; status: string; campaign: string; adgroup: string };
-export type GoogleSegment = GMetrics & { range: GRange; key: string };
+// campaignId 가 있으면 캠페인별 행(제외 캠페인을 걸러낸 뒤 화면에서 합산), 없으면 계정 전체 행
+export type GoogleSegment = GMetrics & { range: GRange; key: string; campaignId?: string };
 
 export type GoogleSnapshot = {
   source: "api" | "sheet";
@@ -119,15 +120,35 @@ export type GoogleSnapshot = {
   errors: string[];
 };
 
+// 대시보드와 상관없는 캠페인 (이름 비교 시 대소문자·공백 무시)
+const EXCLUDED_CAMPAIGNS = ["test 1"];
+const norm = (s?: string) => (s ?? "").toLowerCase().replace(/\s+/g, "");
+const excludedNames = new Set(EXCLUDED_CAMPAIGNS.map(norm));
+
+function withoutExcluded(s: GoogleSnapshot): GoogleSnapshot {
+  const out = new Set(s.campaigns.filter((c) => excludedNames.has(norm(c.name))).map((c) => c.id));
+  if (!out.size) return s;
+  const keep = <T extends { campaignId?: string }>(x: T) => !x.campaignId || !out.has(x.campaignId);
+  return {
+    ...s,
+    campaigns: s.campaigns.filter((c) => !out.has(c.id)),
+    adgroups: s.adgroups.filter(keep),
+    keywords: s.keywords.filter(keep),
+    searchTerms: s.searchTerms.filter((t) => !excludedNames.has(norm(t.campaign))),
+    devices: s.devices.filter(keep),
+    hours: s.hours.filter(keep),
+  };
+}
+
 export async function getGoogleSnapshot(): Promise<GoogleSnapshot> {
   if (sheetConfigured()) {
     try {
-      return await getGoogleSheetSnapshot();
+      return withoutExcluded(await getGoogleSheetSnapshot());
     } catch (e) {
       if (!apiConfigured()) return { ...emptySnapshot("sheet"), errors: [(e as Error).message] };
     }
   }
-  return getGoogleApiSnapshot();
+  return withoutExcluded(await getGoogleApiSnapshot());
 }
 
 function emptySnapshot(source: GoogleSnapshot["source"]): GoogleSnapshot {

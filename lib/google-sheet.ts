@@ -131,7 +131,7 @@ export async function getGoogleSheetSnapshot(): Promise<GoogleSnapshot> {
     term: r.term, status: r.status, campaign: r.campaign, adgroup: r.adgroup, ...flat(r),
   }));
   const seg = (rows: Row[] = [], key: string): GoogleSegment[] =>
-    rows.map((r) => ({ range: r.range as GRange, key: r[key], ...flat(r) }));
+    rows.map((r) => ({ range: r.range as GRange, key: r[key], campaignId: r.campaign_id || undefined, ...flat(r) }));
 
   return {
     source: "sheet",

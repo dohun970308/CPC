@@ -98,8 +98,11 @@ export function checkGoogle(s: GoogleSnapshot): Finding[] {
       add("주의", where, `품질평가점수 ${k.qualityScore}/10 — 같은 순위에 더 비싸게 냅니다(최근 7일 ${won(cost7)}).`);
   }
 
-  // 돈만 쓰고 전환 없는 실제 검색어 (최근 7일, 상위 5개)
-  const wasted = s.searchTerms.filter((t) => t.conversions === 0 && t.cost >= 10000).sort((a, b) => b.cost - a.cost);
+  // 돈만 쓰고 전환 없는 실제 검색어 (최근 7일, 상위 5개). 꺼둔 캠페인의 검색어는 제외
+  const campOnNames = new Set(s.campaigns.filter((c) => c.status === "ENABLED").map((c) => c.name));
+  const wasted = s.searchTerms
+    .filter((t) => campOnNames.has(t.campaign) && t.conversions === 0 && t.cost >= 10000)
+    .sort((a, b) => b.cost - a.cost);
   for (const t of wasted.slice(0, 5))
     add("주의", `검색어 "${t.term}"`, `최근 7일 ${won(t.cost)} 쓰고 전환 0건 — 제외 키워드 등록을 검토하세요.`);
   if (wasted.length > 5) add("참고", "검색어", `이 외에도 비용만 쓴 검색어가 ${wasted.length - 5}개 더 있습니다.`);

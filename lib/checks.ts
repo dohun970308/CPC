@@ -20,14 +20,14 @@ export function checkNaver(s: NaverSnapshot): Finding[] {
       add("주의", "계정", `비즈머니 ${won(s.bizmoney.bizmoney)} — 켜진 캠페인 하루예산 합계(${won(dailySum)})의 3일치 미만입니다.`);
   }
 
-  for (const c of s.campaigns) {
-    if (c.userLock) add("참고", c.name, "캠페인이 꺼져(OFF) 있습니다.");
-    else if (c.status && c.status !== "ELIGIBLE") add("치명", c.name, `캠페인 노출 불가: ${c.status}${c.statusReason ? ` (${c.statusReason})` : ""}`);
-  }
+  // 꺼둔(OFF) 캠페인은 일부러 쉬는 것이므로 캠페인과 그 안의 그룹·키워드 모두 점검하지 않음
+  for (const c of activeCampaigns)
+    if (c.status && c.status !== "ELIGIBLE") add("치명", c.name, `캠페인 노출 불가: ${c.status}${c.statusReason ? ` (${c.statusReason})` : ""}`);
 
+  const campOn = new Set(activeCampaigns.map((c) => c.nccCampaignId));
   const campName = new Map(s.campaigns.map((c) => [c.nccCampaignId, c.name]));
-  const groupById = new Map(s.adgroups.map((g) => [g.nccAdgroupId, g]));
-  for (const g of s.adgroups) {
+  const groupById = new Map(s.adgroups.filter((g) => campOn.has(g.nccCampaignId)).map((g) => [g.nccAdgroupId, g]));
+  for (const g of groupById.values()) {
     const where = `${campName.get(g.nccCampaignId) ?? "?"} › ${g.name}`;
     if (g.name !== g.name.trim()) add("참고", where, "그룹 이름 앞뒤에 공백이 있습니다.");
     if (g.userLock) continue;
@@ -62,7 +62,7 @@ export function checkGoogle(s: GoogleSnapshot): Finding[] {
   const add = (level: Level, where: string, message: string) => f.push({ level, channel: "구글", where, message });
   if (s.account?.status && s.account.status !== "ENABLED") add("치명", "계정", `계정 상태: ${s.account.status}`);
   for (const c of s.campaigns) {
-    if (c.status === "PAUSED") { add("참고", c.name, "캠페인이 일시중지 상태입니다."); continue; }
+    if (c.status === "PAUSED") continue; // 일부러 꺼둔 캠페인은 점검하지 않음
     if (c.primaryStatus && !["ELIGIBLE"].includes(c.primaryStatus)) {
       const lvl: Level = ["NOT_ELIGIBLE", "ENDED", "PENDING"].includes(c.primaryStatus) ? "치명" : "주의";
       add(lvl, c.name, `상태: ${c.primaryStatus}${c.primaryStatusReasons?.length ? ` (${c.primaryStatusReasons.join(", ")})` : ""}`);

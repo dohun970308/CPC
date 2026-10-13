@@ -17,5 +17,6 @@ export async function GET() {
       GOOGLE_SA_KEY_JSON: has("GOOGLE_SA_KEY_JSON"),
     },
     passwordProtected: has("DASHBOARD_PASSWORD"),
+    apiTokenEnabled: (process.env.DASHBOARD_API_TOKEN ?? "").length >= 32,
   });
 }

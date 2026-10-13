@@ -4,10 +4,21 @@ import { NextRequest, NextResponse } from "next/server";
 // 홈(앱 소개)과 개인정보처리방침은 구글 OAuth 브랜드 인증 요건 때문에 비밀번호 없이 공개
 const PUBLIC_PATHS = new Set(["/", "/privacy", "/robots.txt", "/sitemap.xml"]);
 
+// 외부 서버(카독.com 어드민 등)는 DASHBOARD_API_TOKEN 으로 /api/* 만 읽을 수 있다.
+// 토큰은 그쪽 서버 코드에서만 쓰고 브라우저로 내보내면 안 된다. 사용법: docs/admin-api.md
+function validApiToken(req: NextRequest, auth: string) {
+  const token = process.env.DASHBOARD_API_TOKEN;
+  return Boolean(token && token.length >= 32 && req.nextUrl.pathname.startsWith("/api/") && auth === `Bearer ${token}`);
+}
+
 export function middleware(req: NextRequest) {
+  const auth = req.headers.get("authorization") ?? "";
+  if (validApiToken(req, auth)) return NextResponse.next();
+  if (auth.startsWith("Bearer ") && req.nextUrl.pathname.startsWith("/api/"))
+    return NextResponse.json({ error: "API 토큰이 올바르지 않습니다." }, { status: 401 });
+
   const pw = process.env.DASHBOARD_PASSWORD;
   if (!pw || PUBLIC_PATHS.has(req.nextUrl.pathname)) return NextResponse.next();
-  const auth = req.headers.get("authorization") ?? "";
   if (auth.startsWith("Basic ")) {
     try {
       const decoded = atob(auth.slice(6));

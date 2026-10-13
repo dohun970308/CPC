@@ -93,3 +93,7 @@ h3 { font-size: 15px; margin: 22px 0 10px; }
 td.warn { color: var(--warn); font-weight: 600; }
 .bar { display: inline-block; height: 8px; min-width: 2px; border-radius: 4px; background: var(--google); vertical-align: middle; }
 td:has(> .bar) { width: 30%; min-width: 120px; }
+.anchor, section[id] { scroll-margin-top: 150px; }
+.termlink { color: var(--accent); font-size: 12px; white-space: nowrap; }
+tr.term td { font-size: 12px; color: var(--muted); }
+tr.term td:first-child { padding-left: 66px; }

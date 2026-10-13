@@ -103,7 +103,17 @@ export type GoogleKeyword = {
   metrics: Partial<Record<GRange, GMetrics>>;
 };
 
-export type GoogleSearchTerm = GMetrics & { term: string; status: string; campaign: string; adgroup: string };
+// keyword: 이 검색어를 노출시킨 내 키워드(확장·구문 검색이면 실제 검색어와 다름)
+export type GoogleSearchTerm = GMetrics & {
+  term: string;
+  status: string;
+  campaign: string;
+  campaignId?: string;
+  adgroup: string;
+  adgroupId?: string;
+  keyword?: string;
+  keywordMatchType?: string;
+};
 // campaignId 가 있으면 캠페인별 행(제외 캠페인을 걸러낸 뒤 화면에서 합산), 없으면 계정 전체 행
 export type GoogleSegment = GMetrics & { range: GRange; key: string; campaignId?: string };
 

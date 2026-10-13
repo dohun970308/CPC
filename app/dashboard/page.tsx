@@ -16,7 +16,16 @@ const SORT_LABEL: Record<SortKey, string> = {
   cost: "광고비 많은 순",
   conv: "전환 많은 순",
 };
-const NAVER_FIELD = { clk: "clkCnt", imp: "impCnt", cost: "salesAmt", conv: "ccnt" } as const;
+// 상단 '이동' 버튼: [섹션 id, 버튼 이름]
+const JUMPS = [
+  ["sec-summary", "전체 합계"],
+  ["sec-checks", "자동 점검"],
+  ["sec-naver", "네이버 광고"],
+  ["sec-naver-kw", "네이버 키워드 순위"],
+  ["sec-google", "구글 광고"],
+  ["sec-google-terms", "구글 실제 검색어"],
+] as const;
+const NAVER_FIELD ={ clk: "clkCnt", imp: "impCnt", cost: "salesAmt", conv: "ccnt" } as const;
 const GOOGLE_FIELD = { clk: "clicks", imp: "impressions", cost: "cost", conv: "conversions" } as const;
 
 function sortBy<T>(items: T[], key: SortKey, value: (x: T, field: "clk" | "imp" | "cost" | "conv") => number | undefined) {
@@ -109,9 +118,15 @@ export default function Page() {
             <button key={k} aria-pressed={sort === k} onClick={() => setSort(k)}>{SORT_LABEL[k]}</button>
           ))}
         </div>
+        <div className="tabs">
+          <span className="muted tablabel">이동</span>
+          {JUMPS.map(([id, label]) => (
+            <button key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })}>{label}</button>
+          ))}
+        </div>
       </div>
 
-      <section className="card">
+      <section className="card" id="sec-summary">
         <h2>전체 합계 · {RANGE_LABEL[range]}</h2>
         <div className="kpis">
           <Kpi label="노출" value={n(all.imp)} />
@@ -125,7 +140,7 @@ export default function Page() {
         <div className="muted">네이버 전환은 전환 추적(프리미엄 로그분석) 설치 후부터 집계됩니다.</div>
       </section>
 
-      <section className="card">
+      <section className="card" id="sec-checks">
         <h2>
           자동 점검
           <span className="badge b-치명">치명 {count("치명")}</span>
@@ -159,9 +174,9 @@ export default function Page() {
         )}
       </section>
 
-      <NaverSection data={naver} range={range} sort={sort} />
-      <KeywordRanking data={naver} range={range} sort={sort} />
-      <GoogleSection data={google} range={range} sort={sort} />
+      <div id="sec-naver" className="anchor"><NaverSection data={naver} range={range} sort={sort} /></div>
+      <div id="sec-naver-kw" className="anchor"><KeywordRanking data={naver} range={range} sort={sort} /></div>
+      <div id="sec-google" className="anchor"><GoogleSection data={google} range={range} sort={sort} /></div>
     </main>
   );
 }
@@ -426,6 +441,7 @@ const G_PRIMARY: Record<string, string> = {
 const G_MATCH: Record<string, string> = { EXACT: "완전", PHRASE: "구문", BROAD: "확장" };
 const G_DEVICE: Record<string, string> = { MOBILE: "모바일", DESKTOP: "PC", TABLET: "태블릿", CONNECTED_TV: "TV", OTHER: "기타" };
 const share = (v?: number) => (v == null ? "-" : `${Math.round(v * 100)}%`);
+const kwKey = (adgroupId?: string, text?: string, matchType?: string) => `${adgroupId}|${text}|${matchType}`;
 const gVal = (x: any, range: Range, f: keyof typeof GOOGLE_FIELD) => x.metrics?.[range]?.[GOOGLE_FIELD[f]];
 
 function GStatus({ status, primary }: { status?: string; primary?: string }) {
@@ -446,11 +462,30 @@ function GoogleTitle({ data }: { data: any }) {
 
 function GoogleSection({ data, range, sort }: { data: any; range: Range; sort: SortKey }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [openKw, setOpenKw] = useState<Set<string>>(new Set());
   const kwByGroup = useMemo(() => {
     const m = new Map<string, any[]>();
     for (const k of data?.keywords ?? []) m.set(k.adgroupId, [...(m.get(k.adgroupId) ?? []), k]);
     return m;
   }, [data]);
+  // 키워드별 실제 검색어 (확장·구문 검색 키워드가 실제로 어떤 검색어에 노출됐는지)
+  const termsByKw = useMemo(() => {
+    const m = new Map<string, any[]>();
+    for (const t of data?.searchTerms ?? []) {
+      if (!t.keyword) continue;
+      const key = kwKey(t.adgroupId, t.keyword, t.keywordMatchType);
+      m.set(key, [...(m.get(key) ?? []), t]);
+    }
+    for (const list of m.values()) list.sort((a, b) => b.clicks - a.clicks || b.impressions - a.impressions);
+    return m;
+  }, [data]);
+  const toggleKw = (id: string) =>
+    setOpenKw((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   if (!data) return <section className="card"><GoogleTitle data={data} /><div className="empty">불러오는 중…</div></section>;
   if (!data.configured)
@@ -545,11 +580,16 @@ function GoogleSection({ data, range, sort }: { data: any; range: Range; sort: S
                     ...(isOpen
                       ? kws.length === 0
                         ? [<tr key={`${g.id}-empty`} className="kw"><td colSpan={13} className="l muted">키워드가 없습니다.</td></tr>]
-                        : sortBy<any>(kws, sort, (k, f) => gVal(k, range, f)).map((k: any) => {
+                        : sortBy<any>(kws, sort, (k, f) => gVal(k, range, f)).flatMap((k: any) => {
                             const km = k.metrics?.[range] ?? {};
-                            return (
-                              <tr key={k.id} className="kw">
-                                <td>{k.text} <span className="muted">{G_MATCH[k.matchType] ?? k.matchType}</span></td>
+                            const terms = termsByKw.get(kwKey(k.adgroupId, k.text, k.matchType)) ?? [];
+                            const kwOpen = openKw.has(k.id);
+                            return [
+                              <tr key={k.id} className={terms.length ? "kw clickable" : "kw"} onClick={terms.length ? () => toggleKw(k.id) : undefined} aria-expanded={terms.length ? kwOpen : undefined}>
+                                <td>
+                                  {k.text} <span className="muted">{G_MATCH[k.matchType] ?? k.matchType}</span>
+                                  {terms.length > 0 && <span className="termlink"> {kwOpen ? "▾" : "▸"} 실제 검색어 {terms.length}개</span>}
+                                </td>
                                 <td className="l">
                                   {k.approvalStatus === "DISAPPROVED" ? <span className="badge b-치명">비승인</span> : <GStatus status={k.status} />}
                                 </td>
@@ -557,8 +597,19 @@ function GoogleSection({ data, range, sort }: { data: any; range: Range; sort: S
                                 <td className={k.qualityScore != null && k.qualityScore <= 4 ? "warn" : ""}>{k.qualityScore ?? "-"}</td>
                                 <Cells imp={km.impressions} clk={km.clicks} cost={km.cost} conv={km.conversions} />
                                 <td>-</td><td>-</td>
-                              </tr>
-                            );
+                              </tr>,
+                              ...(kwOpen
+                                ? terms.map((t: any, i: number) => (
+                                    <tr key={`${k.id}-t${i}`} className="term">
+                                      <td>“{t.term}”{t.status === "EXCLUDED" && <span className="muted"> (제외됨)</span>}</td>
+                                      <td className="l muted">최근 7일</td>
+                                      <td>-</td><td>-</td><td>-</td>
+                                      <Cells imp={t.impressions} clk={t.clicks} cost={t.cost} conv={t.conversions} />
+                                      <td>-</td><td>-</td>
+                                    </tr>
+                                  ))
+                                : []),
+                            ];
                           })
                       : []),
                   ];
@@ -578,28 +629,46 @@ function GoogleSection({ data, range, sort }: { data: any; range: Range; sort: S
 function SearchTerms({ terms, sort }: { terms: any[]; sort: SortKey }) {
   const [limit, setLimit] = useState(20);
   const [wasteOnly, setWasteOnly] = useState(false);
+  const [q, setQ] = useState("");
   if (!terms.length) return null;
   const key = sort === "default" ? "cost" : sort;
-  const rows = sortBy<any>(terms.filter((t) => !wasteOnly || (t.conversions === 0 && t.cost > 0)), key, (t, f) => t[GOOGLE_FIELD[f]]);
+  const query = q.trim().toLowerCase();
+  const rows = sortBy<any>(
+    terms.filter(
+      (t) =>
+        (!wasteOnly || (t.conversions === 0 && t.cost > 0)) &&
+        (!query || `${t.term} ${t.keyword ?? ""} ${t.adgroup}`.toLowerCase().includes(query)),
+    ),
+    key,
+    (t, f) => t[GOOGLE_FIELD[f]],
+  );
+  const hasKw = terms.some((t) => t.keyword);
   return (
     <>
-      <h3>실제 검색어 · 최근 7일 · {SORT_LABEL[key]}</h3>
+      <h3 id="sec-google-terms" className="anchor">실제 검색어 · 최근 7일 · {SORT_LABEL[key]}</h3>
       <div className="toolbar">
+        <input type="search" placeholder="검색어·키워드 검색" value={q} onChange={(e) => { setQ(e.target.value); setLimit(20); }} />
         <label className="check">
           <input type="checkbox" checked={wasteOnly} onChange={(e) => { setWasteOnly(e.target.checked); setLimit(20); }} />
           비용만 쓰고 전환 0건인 검색어만
         </label>
-        <span className="muted">{n(rows.length)}개 (광고비 상위 300개 중)</span>
+        <span className="muted">{n(rows.length)}개 (최근 7일 상위 {n(terms.length)}개 중)</span>
       </div>
+      {!hasKw && (
+        <div className="muted" style={{ marginBottom: 8 }}>
+          '걸린 키워드'를 보려면 구글 애즈 스크립트를 최신 버전으로 바꿔 넣으세요.
+        </div>
+      )}
       <div className="tablewrap">
         <table>
           <thead>
-            <tr><th className="l">검색어</th><th className="l">캠페인 › 광고그룹</th><th>노출</th><th>클릭</th><th>CTR</th><th>평균 CPC</th><th>광고비</th><th>전환</th></tr>
+            <tr><th className="l">실제 검색어</th><th className="l">걸린 키워드</th><th className="l">캠페인 › 광고그룹</th><th>노출</th><th>클릭</th><th>CTR</th><th>평균 CPC</th><th>광고비</th><th>전환</th></tr>
           </thead>
           <tbody>
             {rows.slice(0, limit).map((t: any, i: number) => (
-              <tr key={`${t.term}-${t.adgroup}-${i}`}>
+              <tr key={`${t.term}-${t.adgroup}-${t.keyword}-${i}`}>
                 <td className="l" style={{ fontWeight: 600 }}>{t.term}{t.status === "EXCLUDED" && <span className="muted"> (제외됨)</span>}</td>
+                <td className="l">{t.keyword ? <>{t.keyword} <span className="muted">{G_MATCH[t.keywordMatchType] ?? t.keywordMatchType}</span></> : "-"}</td>
                 <td className="l muted">{t.campaign} › {t.adgroup}</td>
                 <Cells imp={t.impressions} clk={t.clicks} cost={t.cost} conv={t.conversions} />
               </tr>

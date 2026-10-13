@@ -86,16 +86,19 @@ function main() {
         micros(c.effectiveCpcBidMicros)].concat(metricCells(kwM, key));
     }));
 
-  // 실제 검색어 (최근 7일, 광고비 많은 순 300개)
+  // 실제 검색어 (최근 7일, 클릭 많은 순 500개) + 어떤 키워드(확장·구문 포함)에 걸려 노출됐는지
   var terms = rowsOf(
-    'SELECT search_term_view.search_term, search_term_view.status, campaign.name, ad_group.name, ' +
+    'SELECT search_term_view.search_term, search_term_view.status, campaign.id, campaign.name, ad_group.id, ad_group.name, ' +
+      'segments.keyword.info.text, segments.keyword.info.match_type, ' +
       'metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions FROM search_term_view ' +
-      'WHERE segments.date DURING LAST_7_DAYS ORDER BY metrics.cost_micros DESC LIMIT 300'
+      'WHERE segments.date DURING LAST_7_DAYS ORDER BY metrics.clicks DESC LIMIT 500'
   );
-  writeTab(ss, 'search_terms', ['term', 'status', 'campaign', 'adgroup'].concat(M),
+  writeTab(ss, 'search_terms',
+    ['term', 'status', 'campaign_id', 'campaign', 'adgroup_id', 'adgroup', 'keyword', 'keyword_match_type'].concat(M),
     terms.map(function (r) {
-      return [r.searchTermView.searchTerm, r.searchTermView.status, r.campaign.name, r.adGroup.name]
-        .concat(metricValues(r.metrics));
+      var kw = (r.segments && r.segments.keyword && r.segments.keyword.info) || {};
+      return [r.searchTermView.searchTerm, r.searchTermView.status, r.campaign.id, r.campaign.name, r.adGroup.id,
+        r.adGroup.name, kw.text || '', kw.matchType || ''].concat(metricValues(r.metrics));
     }));
 
   // 기기별·시간대별 (오늘, 최근 7일) — 대시보드에서 특정 캠페인을 뺄 수 있게 캠페인별로 기록

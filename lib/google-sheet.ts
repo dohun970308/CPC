@@ -128,7 +128,15 @@ export async function getGoogleSheetSnapshot(): Promise<GoogleSnapshot> {
     metrics: metricsOf(r),
   }));
   const searchTerms: GoogleSearchTerm[] = (t.search_terms ?? []).map((r) => ({
-    term: r.term, status: r.status, campaign: r.campaign, adgroup: r.adgroup, ...flat(r),
+    term: r.term,
+    status: r.status,
+    campaign: r.campaign,
+    campaignId: r.campaign_id || undefined,
+    adgroup: r.adgroup,
+    adgroupId: r.adgroup_id || undefined,
+    keyword: r.keyword || undefined,
+    keywordMatchType: r.keyword_match_type || undefined,
+    ...flat(r),
   }));
   const seg = (rows: Row[] = [], key: string): GoogleSegment[] =>
     rows.map((r) => ({ range: r.range as GRange, key: r[key], campaignId: r.campaign_id || undefined, ...flat(r) }));

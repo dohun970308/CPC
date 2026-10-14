@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type {
-  GMetrics, GRange, GoogleAdgroup, GoogleCampaign, GoogleKeyword, GoogleSearchTerm, GoogleSegment, GoogleSnapshot,
+  GMetrics, GRange, GoogleAdgroup, GoogleCampaign, GoogleKeyword, GoogleNegative, GoogleSearchTerm, GoogleSegment, GoogleSnapshot,
 } from "./google";
 
 // 구글 애즈 스크립트(scripts/google-ads-to-sheet.js)가 매시간 채우는 비공개 시트를
@@ -43,12 +43,23 @@ async function serviceAccountToken(): Promise<string> {
   return j.access_token as string;
 }
 
-const TABS = ["meta", "campaigns", "adgroups", "keywords", "search_terms", "devices", "hours"] as const;
-type Tab = (typeof TABS)[number];
+const BASE_TABS = ["meta", "campaigns", "adgroups", "keywords", "search_terms", "devices", "hours"] as const;
+// 이전 버전 스크립트가 만든 시트에는 negatives 탭이 없다 → 없으면 빼고 다시 읽는다
+const ALL_TABS = [...BASE_TABS, "negatives"] as const;
+type Tab = (typeof ALL_TABS)[number];
 type Row = Record<string, string>;
 
-async function readTabs(): Promise<Record<Tab, Row[]>> {
+async function readTabs(): Promise<Partial<Record<Tab, Row[]>>> {
   const token = await serviceAccountToken();
+  try {
+    return await readRanges(token, ALL_TABS);
+  } catch (e) {
+    if ((e as { status?: number }).status !== 400) throw e;
+    return readRanges(token, BASE_TABS);
+  }
+}
+
+async function readRanges(token: string, TABS: readonly Tab[]): Promise<Partial<Record<Tab, Row[]>>> {
   const qs = new URLSearchParams(TABS.map((t) => ["ranges", t]));
   const res = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(process.env.GOOGLE_ADS_SHEET_ID!)}/values:batchGet?${qs}`,
@@ -60,9 +71,9 @@ async function readTabs(): Promise<Record<Tab, Row[]>> {
     if (res.status === 403)
       throw new Error(`시트 읽기 권한 없음(403): 스크립트의 SERVICE_ACCOUNT_EMAIL 과 Google Sheets API 사용 설정을 확인하세요. ${msg}`);
     if (res.status === 404) throw new Error(`시트를 찾을 수 없음(404): GOOGLE_ADS_SHEET_ID 를 확인하세요. ${msg}`);
-    throw new Error(`시트 읽기 실패 ${res.status}: ${msg}`);
+    throw Object.assign(new Error(`시트 읽기 실패 ${res.status}: ${msg}`), { status: res.status });
   }
-  const out = {} as Record<Tab, Row[]>;
+  const out: Partial<Record<Tab, Row[]>> = {};
   (j.valueRanges ?? []).forEach((vr: { values?: string[][] }, i: number) => {
     const [header = [], ...rows] = vr.values ?? [];
     out[TABS[i]] = rows.map((r) => Object.fromEntries(header.map((h, c) => [h, r[c] ?? ""])));
@@ -140,6 +151,12 @@ export async function getGoogleSheetSnapshot(): Promise<GoogleSnapshot> {
   }));
   const seg = (rows: Row[] = [], key: string): GoogleSegment[] =>
     rows.map((r) => ({ range: r.range as GRange, key: r[key], campaignId: r.campaign_id || undefined, ...flat(r) }));
+  const negatives: GoogleNegative[] = (t.negatives ?? []).map((r) => ({
+    campaignId: r.campaign_id,
+    adgroupId: r.adgroup_id || undefined,
+    text: r.text,
+    matchType: r.match_type,
+  }));
 
   return {
     source: "sheet",
@@ -149,6 +166,7 @@ export async function getGoogleSheetSnapshot(): Promise<GoogleSnapshot> {
     adgroups,
     keywords,
     searchTerms,
+    negatives: t.negatives ? negatives : undefined,
     devices: seg(t.devices, "device"),
     hours: seg(t.hours, "hour"),
     errors: dataAt ? [] : ["시트에 아직 데이터가 없습니다. 구글 애즈 스크립트를 한 번 실행하세요."],

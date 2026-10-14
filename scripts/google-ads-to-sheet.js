@@ -101,6 +101,31 @@ function main() {
         r.adGroup.name, kw.text || '', kw.matchType || ''].concat(metricValues(r.metrics));
     }));
 
+  // 지금 등록된 제외 키워드 (캠페인·광고그룹 단위 + 캠페인에 연결된 공유 목록)
+  // 대시보드가 '이미 제외한 검색어'를 자동 점검에서 빼는 데 쓴다
+  var negs = [];
+  rowsOf("SELECT campaign.id, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type FROM campaign_criterion " +
+    "WHERE campaign_criterion.negative = TRUE AND campaign_criterion.type = 'KEYWORD' AND campaign.status != 'REMOVED'")
+    .forEach(function (r) { negs.push([r.campaign.id, '', r.campaignCriterion.keyword.text, r.campaignCriterion.keyword.matchType]); });
+  rowsOf("SELECT campaign.id, ad_group.id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type FROM ad_group_criterion " +
+    "WHERE ad_group_criterion.negative = TRUE AND ad_group_criterion.type = 'KEYWORD' AND ad_group.status != 'REMOVED' " +
+    "AND campaign.status != 'REMOVED'")
+    .forEach(function (r) { negs.push([r.campaign.id, r.adGroup.id, r.adGroupCriterion.keyword.text, r.adGroupCriterion.keyword.matchType]); });
+  var setCampaigns = {};
+  rowsOf("SELECT campaign.id, shared_set.id FROM campaign_shared_set WHERE campaign_shared_set.status = 'ENABLED' " +
+    "AND shared_set.type = 'NEGATIVE_KEYWORDS' AND campaign.status != 'REMOVED'")
+    .forEach(function (r) { (setCampaigns[r.sharedSet.id] = setCampaigns[r.sharedSet.id] || []).push(r.campaign.id); });
+  if (Object.keys(setCampaigns).length) {
+    rowsOf("SELECT shared_set.id, shared_criterion.keyword.text, shared_criterion.keyword.match_type FROM shared_criterion " +
+      "WHERE shared_criterion.type = 'KEYWORD' AND shared_set.type = 'NEGATIVE_KEYWORDS'")
+      .forEach(function (r) {
+        (setCampaigns[r.sharedSet.id] || []).forEach(function (cid) {
+          negs.push([cid, '', r.sharedCriterion.keyword.text, r.sharedCriterion.keyword.matchType]);
+        });
+      });
+  }
+  writeTab(ss, 'negatives', ['campaign_id', 'adgroup_id', 'text', 'match_type'], negs);
+
   // 기기별·시간대별 (오늘, 최근 7일) — 대시보드에서 특정 캠페인을 뺄 수 있게 캠페인별로 기록
   var dev = [];
   var hour = [];
@@ -124,7 +149,7 @@ function main() {
   ]);
 
   Logger.log('완료: 캠페인 ' + camps.length + ', 광고그룹 ' + groups.length + ', 키워드 ' + kws.length +
-    ', 검색어 ' + terms.length);
+    ', 검색어 ' + terms.length + ', 제외 키워드 ' + negs.length);
   Logger.log('Vercel 의 GOOGLE_ADS_SHEET_ID 에 넣을 값: ' + ss.getId());
 }
 

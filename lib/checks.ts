@@ -101,7 +101,7 @@ export function checkGoogle(s: GoogleSnapshot): Finding[] {
   // 돈만 쓰고 전환 없는 실제 검색어 (최근 7일, 상위 5개). 꺼둔 캠페인의 검색어는 제외
   const campOnNames = new Set(s.campaigns.filter((c) => c.status === "ENABLED").map((c) => c.name));
   const wasted = s.searchTerms
-    .filter((t) => campOnNames.has(t.campaign) && t.conversions === 0 && t.cost >= 10000)
+    .filter((t) => campOnNames.has(t.campaign) && !t.blocked && t.conversions === 0 && t.cost >= 10000)
     .sort((a, b) => b.cost - a.cost);
   for (const t of wasted.slice(0, 5))
     add("주의", `검색어 "${t.term}"`, `최근 7일 ${won(t.cost)} 쓰고 전환 0건 — 제외 키워드 등록을 검토하세요.`);

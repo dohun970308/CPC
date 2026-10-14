@@ -601,7 +601,7 @@ function GoogleSection({ data, range, sort }: { data: any; range: Range; sort: S
                               ...(kwOpen
                                 ? terms.map((t: any, i: number) => (
                                     <tr key={`${k.id}-t${i}`} className="term">
-                                      <td>“{t.term}”{t.status === "EXCLUDED" && <span className="muted"> (제외됨)</span>}</td>
+                                      <td>“{t.term}”{t.blocked && <span className="badge b-참고" title="지금은 제외 키워드에 걸려 더 이상 노출되지 않습니다"> 제외 등록됨</span>}</td>
                                       <td className="l muted">최근 7일</td>
                                       <td>-</td><td>-</td><td>-</td>
                                       <Cells imp={t.impressions} clk={t.clicks} cost={t.cost} conv={t.conversions} />
@@ -636,7 +636,7 @@ function SearchTerms({ terms, sort }: { terms: any[]; sort: SortKey }) {
   const rows = sortBy<any>(
     terms.filter(
       (t) =>
-        (!wasteOnly || (t.conversions === 0 && t.cost > 0)) &&
+        (!wasteOnly || (!t.blocked && t.conversions === 0 && t.cost > 0)) &&
         (!query || `${t.term} ${t.keyword ?? ""} ${t.adgroup}`.toLowerCase().includes(query)),
     ),
     key,
@@ -667,7 +667,7 @@ function SearchTerms({ terms, sort }: { terms: any[]; sort: SortKey }) {
           <tbody>
             {rows.slice(0, limit).map((t: any, i: number) => (
               <tr key={`${t.term}-${t.adgroup}-${t.keyword}-${i}`}>
-                <td className="l" style={{ fontWeight: 600 }}>{t.term}{t.status === "EXCLUDED" && <span className="muted"> (제외됨)</span>}</td>
+                <td className="l" style={{ fontWeight: 600 }}>{t.term}{t.blocked && <span className="badge b-참고" title="지금은 제외 키워드에 걸려 더 이상 노출되지 않습니다"> 제외 등록됨</span>}</td>
                 <td className="l">{t.keyword ? <>{t.keyword} <span className="muted">{G_MATCH[t.keywordMatchType] ?? t.keywordMatchType}</span></> : "-"}</td>
                 <td className="l muted">{t.campaign} › {t.adgroup}</td>
                 <Cells imp={t.impressions} clk={t.clicks} cost={t.cost} conv={t.conversions} />

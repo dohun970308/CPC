@@ -113,7 +113,10 @@ export type GoogleSearchTerm = GMetrics & {
   adgroupId?: string;
   keyword?: string;
   keywordMatchType?: string;
+  blocked?: boolean; // 지금 등록된 제외 키워드에 걸리는 검색어 (등록 전 7일 기록이 남은 것)
 };
+// 제외 키워드. adgroupId 가 없으면 캠페인 단위(공유 목록 포함)
+export type GoogleNegative = { campaignId: string; adgroupId?: string; text: string; matchType: string };
 // campaignId 가 있으면 캠페인별 행(제외 캠페인을 걸러낸 뒤 화면에서 합산), 없으면 계정 전체 행
 export type GoogleSegment = GMetrics & { range: GRange; key: string; campaignId?: string };
 
@@ -125,10 +128,38 @@ export type GoogleSnapshot = {
   adgroups: GoogleAdgroup[];
   keywords: GoogleKeyword[];
   searchTerms: GoogleSearchTerm[];
+  negatives?: GoogleNegative[]; // 없으면 예전 스크립트라 모름
   devices: GoogleSegment[];
   hours: GoogleSegment[];
   errors: string[];
 };
+
+// 구글 제외 키워드 규칙(유사어 확장 없음): 확장=모든 단어 포함(순서 무관), 구문=단어가 그 순서로 연속, 완전=검색어 전체가 같음
+const words = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(" ").filter(Boolean);
+export function matchesNegative(term: string, neg: Pick<GoogleNegative, "text" | "matchType">) {
+  const t = words(term);
+  const n = words(neg.text);
+  if (!n.length) return false;
+  if (neg.matchType === "EXACT") return t.join(" ") === n.join(" ");
+  if (neg.matchType === "PHRASE") {
+    for (let i = 0; i + n.length <= t.length; i++) if (n.every((w, j) => t[i + j] === w)) return true;
+    return false;
+  }
+  return n.every((w) => t.includes(w));
+}
+
+function markBlocked(s: GoogleSnapshot): GoogleSnapshot {
+  const negs = s.negatives ?? [];
+  return {
+    ...s,
+    searchTerms: s.searchTerms.map((t) => ({
+      ...t,
+      blocked:
+        t.status === "EXCLUDED" || t.status === "ADDED_EXCLUDED" ||
+        negs.some((n) => n.campaignId === t.campaignId && (!n.adgroupId || n.adgroupId === t.adgroupId) && matchesNegative(t.term, n)),
+    })),
+  };
+}
 
 // 대시보드와 상관없는 캠페인 (이름 비교 시 대소문자·공백 무시)
 const EXCLUDED_CAMPAIGNS = ["test 1"];
@@ -145,6 +176,7 @@ function withoutExcluded(s: GoogleSnapshot): GoogleSnapshot {
     adgroups: s.adgroups.filter(keep),
     keywords: s.keywords.filter(keep),
     searchTerms: s.searchTerms.filter((t) => !excludedNames.has(norm(t.campaign))),
+    negatives: s.negatives?.filter(keep),
     devices: s.devices.filter(keep),
     hours: s.hours.filter(keep),
   };
@@ -153,12 +185,12 @@ function withoutExcluded(s: GoogleSnapshot): GoogleSnapshot {
 export async function getGoogleSnapshot(): Promise<GoogleSnapshot> {
   if (sheetConfigured()) {
     try {
-      return withoutExcluded(await getGoogleSheetSnapshot());
+      return markBlocked(withoutExcluded(await getGoogleSheetSnapshot()));
     } catch (e) {
       if (!apiConfigured()) return { ...emptySnapshot("sheet"), errors: [(e as Error).message] };
     }
   }
-  return withoutExcluded(await getGoogleApiSnapshot());
+  return markBlocked(withoutExcluded(await getGoogleApiSnapshot()));
 }
 
 function emptySnapshot(source: GoogleSnapshot["source"]): GoogleSnapshot {

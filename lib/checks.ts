@@ -98,17 +98,6 @@ export function checkGoogle(s: GoogleSnapshot): Finding[] {
       add("주의", where, `품질평가점수 ${k.qualityScore}/10 — 같은 순위에 더 비싸게 냅니다(최근 7일 ${won(cost7)}).`);
   }
 
-  // 노출은 되는데 클릭이 0인 키워드 (최근 7일, 노출 20회 이상, 노출 많은 순 10개)
-  const noClick = activeKw
-    .filter((k) => (k.metrics.last7days?.impressions ?? 0) >= 20 && (k.metrics.last7days?.clicks ?? 0) === 0)
-    .sort((a, b) => (b.metrics.last7days?.impressions ?? 0) - (a.metrics.last7days?.impressions ?? 0));
-  for (const k of noClick.slice(0, 10)) {
-    const imp = k.metrics.last7days?.impressions ?? 0;
-    add(imp >= 100 ? "주의" : "참고", `${groupName.get(k.adgroupId) ?? "?"} › ${k.text}`,
-      `최근 7일 노출 ${imp.toLocaleString("ko-KR")}회, 클릭 0회 — 광고 문구·검색 의도가 맞는지, 입찰 순위가 너무 낮지 않은지 확인하세요.`);
-  }
-  if (noClick.length > 10) add("참고", "키워드", `이 외에도 노출만 되고 클릭 0회인 키워드가 ${noClick.length - 10}개 더 있습니다.`);
-
   // 돈만 쓰고 전환 없는 실제 검색어 (최근 7일, 상위 5개). 꺼둔 캠페인의 검색어는 제외
   const campOnNames = new Set(s.campaigns.filter((c) => c.status === "ENABLED").map((c) => c.name));
   const wasted = s.searchTerms

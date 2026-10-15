@@ -23,6 +23,7 @@ const JUMPS = [
   ["sec-naver", "네이버 광고"],
   ["sec-naver-kw", "네이버 키워드 순위"],
   ["sec-google", "구글 광고"],
+  ["sec-google-kw", "구글 키워드 순위"],
   ["sec-google-terms", "구글 실제 검색어"],
 ] as const;
 const NAVER_FIELD ={ clk: "clkCnt", imp: "impCnt", cost: "salesAmt", conv: "ccnt" } as const;
@@ -177,6 +178,7 @@ export default function Page() {
       <div id="sec-naver" className="anchor"><NaverSection data={naver} range={range} sort={sort} /></div>
       <div id="sec-naver-kw" className="anchor"><KeywordRanking data={naver} range={range} sort={sort} /></div>
       <div id="sec-google" className="anchor"><GoogleSection data={google} range={range} sort={sort} /></div>
+      <div id="sec-google-kw" className="anchor"><GoogleKeywordRanking data={google} range={range} sort={sort} /></div>
     </main>
   );
 }
@@ -352,6 +354,7 @@ const PAGE = 50;
 function KeywordRanking({ data, range, sort }: { data: any; range: Range; sort: SortKey }) {
   const [q, setQ] = useState("");
   const [hideZero, setHideZero] = useState(true);
+  const [noClick, setNoClick] = useState(false);
   const [limit, setLimit] = useState(PAGE);
   if (!data?.configured) return null;
 
@@ -361,12 +364,14 @@ function KeywordRanking({ data, range, sort }: { data: any; range: Range; sort: 
   const query = q.trim().toLowerCase();
   const rows = sortBy<any>(
     data.keywords.filter((k: any) => {
-      if (hideZero && !(stats[k.nccKeywordId]?.impCnt > 0)) return false;
+      const s = stats[k.nccKeywordId];
+      if (hideZero && !(s?.impCnt > 0)) return false;
+      if (noClick && !(s?.impCnt > 0 && !s?.clkCnt)) return false;
       if (!query) return true;
       const g = groupById.get(k.nccAdgroupId);
       return `${k.keyword} ${g?.name ?? ""}`.toLowerCase().includes(query);
     }),
-    sort === "default" ? "clk" : sort,
+    noClick ? "imp" : sort === "default" ? "clk" : sort, // 클릭 0만 볼 때는 노출 많은 순
     (k, f) => stats[k.nccKeywordId]?.[NAVER_FIELD[f]],
   );
 
@@ -387,11 +392,17 @@ function KeywordRanking({ data, range, sort }: { data: any; range: Range; sort: 
           <input type="checkbox" checked={hideZero} onChange={(e) => { setHideZero(e.target.checked); setLimit(PAGE); }} />
           노출 0회 키워드 숨기기
         </label>
+        <label className="check">
+          <input type="checkbox" checked={noClick} onChange={(e) => { setNoClick(e.target.checked); setLimit(PAGE); }} />
+          노출은 있는데 클릭 0회인 키워드만
+        </label>
         <span className="muted">{n(rows.length)}개</span>
       </div>
       {rows.length === 0 ? (
         <div className="empty">
-          {hideZero ? "이 기간에 노출된 키워드가 없습니다. '노출 0회 키워드 숨기기'를 끄면 전체 키워드를 볼 수 있습니다." : "조건에 맞는 키워드가 없습니다."}
+          {noClick
+            ? `${RANGE_LABEL[range]} 노출됐는데 클릭이 0회인 키워드가 없습니다.`
+            : hideZero ? "이 기간에 노출된 키워드가 없습니다. '노출 0회 키워드 숨기기'를 끄면 전체 키워드를 볼 수 있습니다." : "조건에 맞는 키워드가 없습니다."}
         </div>
       ) : (
         <>
@@ -621,6 +632,94 @@ function GoogleSection({ data, range, sort }: { data: any; range: Range; sort: S
       </div>
       <SearchTerms terms={data.searchTerms ?? []} sort={sort} />
       <Segments devices={data.devices ?? []} hours={data.hours ?? []} range={range} />
+    </section>
+  );
+}
+
+// 구글 키워드를 광고그룹 구분 없이 한 줄로 (네이버 키워드 순위와 같은 방식)
+function GoogleKeywordRanking({ data, range, sort }: { data: any; range: Range; sort: SortKey }) {
+  const [q, setQ] = useState("");
+  const [hideZero, setHideZero] = useState(true);
+  const [noClick, setNoClick] = useState(false);
+  const [limit, setLimit] = useState(PAGE);
+  if (!data?.configured || !(data.keywords ?? []).length) return null;
+
+  const groupById = new Map<string, any>((data.adgroups ?? []).map((g: any) => [g.id, g]));
+  const campById = new Map<string, any>(data.campaigns.map((c: any) => [c.id, c]));
+  const query = q.trim().toLowerCase();
+  const rows = sortBy<any>(
+    data.keywords.filter((k: any) => {
+      // 꺼진 캠페인·광고그룹의 키워드는 제외
+      if (campById.get(k.campaignId)?.status !== "ENABLED" || groupById.get(k.adgroupId)?.status !== "ENABLED") return false;
+      const m = k.metrics?.[range];
+      if (hideZero && !(m?.impressions > 0)) return false;
+      if (noClick && !(m?.impressions > 0 && !m?.clicks)) return false;
+      if (!query) return true;
+      return `${k.text} ${groupById.get(k.adgroupId)?.name ?? ""}`.toLowerCase().includes(query);
+    }),
+    noClick ? "imp" : sort === "default" ? "clk" : sort,
+    (k, f) => gVal(k, range, f),
+  );
+
+  return (
+    <section className="card">
+      <h2>
+        <span className="dot" style={{ background: "var(--google)" }} />
+        구글 키워드 순위 · {RANGE_LABEL[range]} · {SORT_LABEL[noClick ? "imp" : sort === "default" ? "clk" : sort]}
+      </h2>
+      <div className="toolbar">
+        <input type="search" placeholder="키워드·광고그룹 검색" value={q} onChange={(e) => { setQ(e.target.value); setLimit(PAGE); }} />
+        <label className="check">
+          <input type="checkbox" checked={hideZero} onChange={(e) => { setHideZero(e.target.checked); setLimit(PAGE); }} />
+          노출 0회 키워드 숨기기
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={noClick} onChange={(e) => { setNoClick(e.target.checked); setLimit(PAGE); }} />
+          노출은 있는데 클릭 0회인 키워드만
+        </label>
+        <span className="muted">{n(rows.length)}개</span>
+      </div>
+      {rows.length === 0 ? (
+        <div className="empty">
+          {noClick
+            ? `${RANGE_LABEL[range]} 노출됐는데 클릭이 0회인 키워드가 없습니다.`
+            : hideZero ? "이 기간에 노출된 키워드가 없습니다. '노출 0회 키워드 숨기기'를 끄면 전체 키워드를 볼 수 있습니다." : "조건에 맞는 키워드가 없습니다."}
+        </div>
+      ) : (
+        <>
+          <div className="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th><th className="l">키워드</th><th className="l">캠페인 › 광고그룹</th><th className="l">상태</th><th>입찰가</th><th>품질</th>
+                  <th>노출</th><th>클릭</th><th>CTR</th><th>평균 CPC</th><th>광고비</th><th>전환</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.slice(0, limit).map((k: any, i: number) => {
+                  const m = k.metrics?.[range] ?? {};
+                  return (
+                    <tr key={k.id}>
+                      <td className="muted">{i + 1}</td>
+                      <td className="l" style={{ fontWeight: 600 }}>{k.text} <span className="muted" style={{ fontWeight: 400 }}>{G_MATCH[k.matchType] ?? k.matchType}</span></td>
+                      <td className="l muted">{campById.get(k.campaignId)?.name ?? "?"} › {groupById.get(k.adgroupId)?.name ?? "?"}</td>
+                      <td className="l">{k.approvalStatus === "DISAPPROVED" ? <span className="badge b-치명">비승인</span> : <GStatus status={k.status} />}</td>
+                      <td>{won(k.cpcBid)}</td>
+                      <td className={k.qualityScore != null && k.qualityScore <= 4 ? "warn" : ""}>{k.qualityScore ?? "-"}</td>
+                      <Cells imp={m.impressions} clk={m.clicks} cost={m.cost} conv={m.conversions} />
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {rows.length > limit && (
+            <div className="more">
+              <button onClick={() => setLimit(limit + PAGE)}>{PAGE}개 더 보기 ({n(rows.length - limit)}개 남음)</button>
+            </div>
+          )}
+        </>
+      )}
     </section>
   );
 }

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "google-token": "node scripts/google-refresh-token.mjs"
+    "google-token": "node scripts/google-refresh-token.mjs",
+    "test": "node --test scripts/payments.test.mjs"
   },
   "dependencies": {
     "next": "15.5.27",

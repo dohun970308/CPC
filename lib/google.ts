@@ -4,6 +4,7 @@
 
 // API 승인 전에는 구글 애즈 스크립트가 채우는 비공개 시트(lib/google-sheet.ts)를 대신 쓴다.
 import { getGoogleSheetSnapshot, sheetConfigured } from "./google-sheet";
+import type { DailyMetrics, Payment } from "./payments";
 
 function apiConfigured() {
   const e = process.env;
@@ -131,6 +132,8 @@ export type GoogleSnapshot = {
   negatives?: GoogleNegative[]; // 없으면 예전 스크립트라 모름
   devices: GoogleSegment[];
   hours: GoogleSegment[];
+  daily?: DailyMetrics[]; // 계정 전체 일별 합계 (시트 방식만, 결제 요약용)
+  payments?: Payment[]; // 시트 '결제' 탭 (없으면 탭이 아직 없는 것)
   errors: string[];
 };
 

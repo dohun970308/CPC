@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Finding } from "@/lib/checks";
+import { DONE_BELOW, manwon, paymentReports, reportText } from "@/lib/payments";
 
 type Range = "today" | "yesterday" | "last7days";
 const RANGE_LABEL: Record<Range, string> = { today: "오늘", yesterday: "어제", last7days: "최근 7일" };
@@ -166,6 +167,7 @@ export default function Page() {
       )}
       {view === "google" && (
         <>
+          <PaymentSummary data={google} />
           <GoogleSection data={google} range={range} sort={sort} />
           <GoogleKeywordRanking data={google} range={range} sort={sort} />
         </>
@@ -672,6 +674,54 @@ function GoogleTitle({ data }: { data: any }) {
       구글 검색광고{data?.account?.name ? ` · ${data.account.name}` : ""}
       {data?.source === "sheet" && <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}> · 구글 애즈 스크립트 시트 (1시간마다 갱신)</span>}
     </h2>
+  );
+}
+
+// 결제일부터 광고비를 빼 나가다 남은 애즈 머니가 1,000원 이하가 되면 보고서 문구를 만든다 (계산은 lib/payments.ts)
+function PaymentSummary({ data }: { data: any }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  if (!data?.configured || data.source !== "sheet") return null;
+  const title = <h2>구글 결제 요약</h2>;
+  if (!data.daily || !data.payments)
+    return (
+      <section className="card">
+        {title}
+        <div className="empty">구글 애즈의 스크립트를 새 버전(scripts/google-ads-to-sheet.js)으로 바꿔 한 번 실행하면, 시트에 '결제' 탭이 생깁니다.</div>
+      </section>
+    );
+  if (!data.payments.length)
+    return (
+      <section className="card">
+        {title}
+        <div className="empty">구글 시트의 '결제' 탭에 결제일(A열)과 결제 금액(B열, VAT 포함)을 한 줄씩 적으면 여기에 요약이 나옵니다.</div>
+      </section>
+    );
+
+  const copy = async (text: string, key: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(key);
+      setTimeout(() => setCopied(null), 1500);
+    } catch {}
+  };
+  return (
+    <section className="card">
+      {title}
+      {paymentReports(data.payments, data.daily).reverse().map((r) =>
+        r.done ? (
+          <div key={r.date} className="report">
+            <pre>{reportText(r)}</pre>
+            <button onClick={() => copy(reportText(r), r.date)}>{copied === r.date ? "복사됨" : "복사"}</button>
+          </div>
+        ) : (
+          <div key={r.date} className="empty">
+            {r.date} {manwon(r.amount)} 결제 · <b>진행 중</b> — 남은 애즈 머니 약 {won(Math.max(r.remaining, 0))} (VAT 별도, 추정).
+            지금까지 클릭 {n(r.clicks)}회 · 광고비 {won(r.cost)} · 전환 {n(r.conversions)}건. {n(DONE_BELOW)}원 이하가 되면 요약이 만들어집니다.
+          </div>
+        ),
+      )}
+      <div className="muted small">결제 금액 ÷ 1.1(VAT)에서 일별 광고비를 빼서 계산합니다. 구글 실제 잔액과 조금 다를 수 있습니다.</div>
+    </section>
   );
 }
 

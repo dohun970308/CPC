@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type {
   GMetrics, GRange, GoogleAdgroup, GoogleCampaign, GoogleKeyword, GoogleNegative, GoogleSearchTerm, GoogleSegment, GoogleSnapshot,
 } from "./google";
+import type { Payment } from "./payments";
 
 // 구글 애즈 스크립트(scripts/google-ads-to-sheet.js)가 매시간 채우는 비공개 시트를
 // 서비스 계정으로 읽는다. 시트는 서비스 계정에만 '보기' 공유되어 있다.
@@ -43,26 +44,28 @@ async function serviceAccountToken(): Promise<string> {
   return j.access_token as string;
 }
 
-const BASE_TABS = ["meta", "campaigns", "adgroups", "keywords", "search_terms", "devices", "hours"] as const;
-// 이전 버전 스크립트가 만든 시트에는 negatives 탭이 없다 → 없으면 빼고 다시 읽는다
-const ALL_TABS = [...BASE_TABS, "negatives"] as const;
+// 이전 버전 스크립트가 만든 시트에는 negatives·daily·결제 탭이 없을 수 있다 → 있는 탭만 읽는다
+const ALL_TABS = ["meta", "campaigns", "adgroups", "keywords", "search_terms", "devices", "hours", "negatives", "daily", "결제"] as const;
 type Tab = (typeof ALL_TABS)[number];
 type Row = Record<string, string>;
 
 async function readTabs(): Promise<Partial<Record<Tab, Row[]>>> {
   const token = await serviceAccountToken();
-  try {
-    return await readRanges(token, ALL_TABS);
-  } catch (e) {
-    if ((e as { status?: number }).status !== 400) throw e;
-    return readRanges(token, BASE_TABS);
-  }
+  const info = await sheetsGet(token, "?fields=sheets.properties.title");
+  const have = new Set((info.sheets ?? []).map((s: { properties: { title: string } }) => s.properties.title));
+  const tabs = ALL_TABS.filter((t) => have.has(t));
+  const j = await sheetsGet(token, `/values:batchGet?${new URLSearchParams(tabs.map((t) => ["ranges", t]))}`);
+  const out: Partial<Record<Tab, Row[]>> = {};
+  (j.valueRanges ?? []).forEach((vr: { values?: string[][] }, i: number) => {
+    const [header = [], ...rows] = vr.values ?? [];
+    out[tabs[i]] = rows.map((r) => Object.fromEntries(header.map((h, c) => [h, r[c] ?? ""])));
+  });
+  return out;
 }
 
-async function readRanges(token: string, TABS: readonly Tab[]): Promise<Partial<Record<Tab, Row[]>>> {
-  const qs = new URLSearchParams(TABS.map((t) => ["ranges", t]));
+async function sheetsGet(token: string, path: string) {
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(process.env.GOOGLE_ADS_SHEET_ID!)}/values:batchGet?${qs}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(process.env.GOOGLE_ADS_SHEET_ID!)}${path}`,
     { cache: "no-store", headers: { Authorization: `Bearer ${token}` } },
   );
   const j = await res.json();
@@ -71,13 +74,20 @@ async function readRanges(token: string, TABS: readonly Tab[]): Promise<Partial<
     if (res.status === 403)
       throw new Error(`시트 읽기 권한 없음(403): 스크립트의 SERVICE_ACCOUNT_EMAIL 과 Google Sheets API 사용 설정을 확인하세요. ${msg}`);
     if (res.status === 404) throw new Error(`시트를 찾을 수 없음(404): GOOGLE_ADS_SHEET_ID 를 확인하세요. ${msg}`);
-    throw Object.assign(new Error(`시트 읽기 실패 ${res.status}: ${msg}`), { status: res.status });
+    throw new Error(`시트 읽기 실패 ${res.status}: ${msg}`);
   }
-  const out: Partial<Record<Tab, Row[]>> = {};
-  (j.valueRanges ?? []).forEach((vr: { values?: string[][] }, i: number) => {
-    const [header = [], ...rows] = vr.values ?? [];
-    out[TABS[i]] = rows.map((r) => Object.fromEntries(header.map((h, c) => [h, r[c] ?? ""])));
-  });
+  return j;
+}
+
+// 사람이 적는 '결제' 탭: A열 결제일, B열 금액. "2026. 10. 18" 같은 시트 날짜 표기와 "500,000" 같은 금액 표기도 받는다
+function parsePayments(rows: Row[] = []): Payment[] {
+  const out: Payment[] = [];
+  for (const r of rows) {
+    const [d = "", a = ""] = Object.values(r);
+    const m = d.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+    const amount = Number(a.replace(/[^\d]/g, ""));
+    if (m && amount > 0) out.push({ date: `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`, amount });
+  }
   return out;
 }
 
@@ -169,6 +179,8 @@ export async function getGoogleSheetSnapshot(): Promise<GoogleSnapshot> {
     negatives: t.negatives ? negatives : undefined,
     devices: seg(t.devices, "device"),
     hours: seg(t.hours, "hour"),
+    daily: t.daily?.map((r) => ({ date: r.date, ...flat(r) })),
+    payments: t["결제"] ? parsePayments(t["결제"]) : undefined,
     errors: dataAt ? [] : ["시트에 아직 데이터가 없습니다. 구글 애즈 스크립트를 한 번 실행하세요."],
   };
 }

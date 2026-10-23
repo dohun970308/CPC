@@ -139,6 +139,17 @@ function main() {
   writeTab(ss, 'devices', ['range', 'campaign_id', 'device'].concat(M), dev);
   writeTab(ss, 'hours', ['range', 'campaign_id', 'hour'].concat(M), hour);
 
+  // 일별 계정 전체 합계 (최근 120일) — 대시보드 '결제 요약'이 결제일부터 광고비를 빼 나가는 데 쓴다
+  var fmt = function (d) { return Utilities.formatDate(d, account.getTimeZone(), 'yyyy-MM-dd'); };
+  var daily = rowsOf('SELECT segments.date, ' + metricFields() + " FROM customer WHERE segments.date BETWEEN '" +
+    fmt(new Date(Date.now() - 120 * 864e5)) + "' AND '" + fmt(new Date()) + "'");
+  writeTab(ss, 'daily', ['date'].concat(M), daily.map(function (r) {
+    return [r.segments.date].concat(metricValues(r.metrics));
+  }));
+
+  // 결제 내역은 사람이 직접 적는 탭 — 없을 때만 만들고, 적어 둔 내용은 덮어쓰지 않는다
+  if (!ss.getSheetByName('결제')) ss.insertSheet('결제').appendRow(['결제일 (예: 2026-10-18)', '결제 금액 (VAT 포함, 원)']);
+
   // 메타 (마지막에 써서 '갱신 시각'이 실제 완료 시각이 되게)
   writeTab(ss, 'meta', ['key', 'value'], [
     ['fetched_at', String(Date.now())],

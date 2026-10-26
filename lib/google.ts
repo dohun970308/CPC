@@ -134,6 +134,8 @@ export type GoogleSnapshot = {
   hours: GoogleSegment[];
   daily?: DailyMetrics[]; // 계정 전체 일별 합계 (시트 방식만, 결제 요약용)
   payments?: Payment[]; // 시트 '결제' 탭 (없으면 탭이 아직 없는 것)
+  // 최근 60일 일별 성과 (기간 직접 선택용, 시트 방식만). id 는 campaigns·adgroups·keywords 의 id 와 같다
+  byDay?: Record<"campaigns" | "adgroups" | "keywords", (DailyMetrics & { id: string })[]>;
   errors: string[];
 };
 

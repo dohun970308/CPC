@@ -112,3 +112,9 @@ tr.term td:first-child { padding-left: 66px; }
 td.num-hi { font-weight: 700; color: var(--accent); }
 .report { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
 .report pre { flex: 1; margin: 0; white-space: pre-wrap; font: inherit; }
+.picker { position: relative; display: inline-block; }
+.picker-panel { position: absolute; z-index: 10; top: calc(100% + 6px); left: 0; width: max-content; max-width: calc(100vw - 32px); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12); }
+.picker-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.picker-row input[type="date"], .picker-row select { border: 1px solid var(--line); background: var(--card); color: var(--text); padding: 6px 8px; border-radius: 8px; font: inherit; }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }

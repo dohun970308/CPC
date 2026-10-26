@@ -3,9 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Finding } from "@/lib/checks";
 import { DONE_BELOW, manwon, paymentReports, reportText } from "@/lib/payments";
+import { DAY_FILTER_LABEL, periodLabel, pickDates, type DayFilter } from "@/lib/dates";
 
-type Range = "today" | "yesterday" | "last7days";
-const RANGE_LABEL: Record<Range, string> = { today: "오늘", yesterday: "어제", last7days: "최근 7일" };
+type Range = "today" | "yesterday" | "last7days" | "custom";
+// custom 의 이름은 적용한 기간(예: 10/24(금)~10/26(일))으로 바뀐다
+const RANGE_LABEL: Record<Range, string> = { today: "오늘", yesterday: "어제", last7days: "최근 7일", custom: "직접 선택" };
+type Period = { from: string; to: string; filter: DayFilter };
 const REFRESH_MS = 5 * 60 * 1000;
 
 // 정렬: 캠페인·광고그룹·키워드 모두 같은 기준으로 (같은 단계 안에서) 정렬
@@ -42,8 +45,10 @@ async function getJson(url: string) {
 }
 
 export default function Page() {
-  const [naver, setNaver] = useState<any>(null);
-  const [google, setGoogle] = useState<any>(null);
+  const [naverRaw, setNaver] = useState<any>(null);
+  const [googleRaw, setGoogle] = useState<any>(null);
+  const [period, setPeriod] = useState<Period | null>(null); // 적용된 직접 선택 기간
+  const [naverCustom, setNaverCustom] = useState<Record<string, any> | null>(null);
   const [range, setRange] = useState<Range>("today");
   const [sort, setSort] = useState<SortKey>("clk");
   const [view, setViewState] = useState<View>("summary");
@@ -74,6 +79,32 @@ export default function Page() {
     const t = setInterval(load, REFRESH_MS);
     return () => clearInterval(t);
   }, [load]);
+
+  // 직접 선택 기간: 네이버는 서버에서 받은 합계, 구글은 시트의 일별 행을 더해 stats.custom / metrics.custom 으로 끼워 넣는다.
+  // 그래서 아래 화면 코드는 오늘·어제와 똑같이 [range] 로 읽는다.
+  const naver = useMemo(
+    () => (naverRaw && naverCustom ? { ...naverRaw, stats: { ...naverRaw.stats, custom: naverCustom } } : naverRaw),
+    [naverRaw, naverCustom],
+  );
+  const google = useMemo(() => (googleRaw && period ? withCustom(googleRaw, period) : googleRaw), [googleRaw, period]);
+  if (period) RANGE_LABEL.custom = periodLabel(period.from, period.to, period.filter);
+
+  const applyPeriod = async (p: Period) => {
+    setErr(null);
+    setPeriod(p);
+    setNaverCustom(null);
+    setRange("custom");
+    if (!naverRaw?.configured) return;
+    const ids = [
+      ...naverRaw.campaigns.map((c: any) => c.nccCampaignId),
+      ...naverRaw.adgroups.map((g: any) => g.nccAdgroupId),
+      ...naverRaw.keywords.map((k: any) => k.nccKeywordId),
+    ];
+    const r = await fetch("/api/naver/stats", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...p, ids }) });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) setNaverCustom(j.stats);
+    else setErr(`네이버 기간 조회 실패: ${j.error ?? r.status}`);
+  };
 
   // 합계 (선택 기간)
   const nStats = naver?.stats?.[range] ?? {};
@@ -118,9 +149,10 @@ export default function Page() {
         </div>
         <div className="tabs">
           <span className="muted tablabel">기간</span>
-          {(Object.keys(RANGE_LABEL) as Range[]).map((r) => (
+          {(Object.keys(RANGE_LABEL) as Range[]).filter((r) => r !== "custom" || period).map((r) => (
             <button key={r} aria-pressed={range === r} onClick={() => setRange(r)}>{RANGE_LABEL[r]}</button>
           ))}
+          <PeriodPicker onApply={applyPeriod} />
           {view !== "summary" && (
             <>
               <span className="muted tablabel" style={{ marginLeft: 12 }}>정렬</span>
@@ -131,6 +163,8 @@ export default function Page() {
           )}
         </div>
       </div>
+
+      {range === "custom" && period && <PeriodNotes naverLoading={!!naverRaw?.configured && !naverCustom} google={googleRaw} />}
 
       {view === "summary" && (
         <>
@@ -174,6 +208,94 @@ export default function Page() {
       )}
     </main>
   );
+}
+
+const ZERO = { impressions: 0, clicks: 0, cost: 0, conversions: 0 };
+
+// 구글: 시트의 일별 행(byDay) 중 고른 날짜만 더해 campaigns·adgroups·keywords 의 metrics.custom 으로 넣는다
+function withCustom(g: any, p: Period) {
+  if (!g.byDay) return g;
+  const days = new Set(pickDates(p.from, p.to, p.filter));
+  const sum = (rows: any[]) => {
+    const m = new Map<string, typeof ZERO>();
+    for (const r of rows) {
+      if (!days.has(r.date)) continue;
+      const o = m.get(r.id) ?? { ...ZERO };
+      o.impressions += r.impressions;
+      o.clicks += r.clicks;
+      o.cost += r.cost;
+      o.conversions += r.conversions;
+      m.set(r.id, o);
+    }
+    return m;
+  };
+  const add = (list: any[] = [], rows: any[]) => {
+    const m = sum(rows);
+    return list.map((x) => ({ ...x, metrics: { ...x.metrics, custom: m.get(x.id) ?? ZERO } }));
+  };
+  return {
+    ...g,
+    campaigns: add(g.campaigns, g.byDay.campaigns),
+    adgroups: add(g.adgroups, g.byDay.adgroups),
+    keywords: add(g.keywords, g.byDay.keywords),
+  };
+}
+
+const DAY = 864e5;
+const seoulToday = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" }); // YYYY-MM-DD
+const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
+
+function PeriodPicker({ onApply }: { onApply: (p: Period) => void }) {
+  const today = seoulToday();
+  const [from, setFrom] = useState(addDays(today, -7));
+  const [to, setTo] = useState(addDays(today, -1));
+  const [filter, setFilter] = useState<DayFilter>("all");
+  const [open, setOpen] = useState(false);
+  const apply = (p: Period) => {
+    setFrom(p.from);
+    setTo(p.to);
+    setFilter(p.filter);
+    setOpen(false);
+    onApply(p);
+  };
+  // 가장 최근에 끝난 금~일 (오늘이 일요일이면 지난주)
+  const dow = new Date(`${today}T00:00:00Z`).getUTCDay();
+  const lastSun = addDays(today, -(dow || 7));
+  const quick: [string, Period][] = [
+    ["지난 금~일", { from: addDays(lastSun, -2), to: lastSun, filter: "all" }],
+    ["최근 4주 주말만", { from: addDays(today, -28), to: addDays(today, -1), filter: "weekend" }],
+    ["최근 4주 평일만", { from: addDays(today, -28), to: addDays(today, -1), filter: "weekday" }],
+  ];
+  return (
+    <span className="picker">
+      <button aria-expanded={open} onClick={() => setOpen(!open)}>기간 직접 선택 ▾</button>
+      {open && (
+        <div className="picker-panel card">
+          <div className="picker-row">
+            {quick.map(([label, p]) => <button key={label} onClick={() => apply(p)}>{label}</button>)}
+          </div>
+          <div className="picker-row">
+            <label>시작 <input type="date" value={from} max={today} onChange={(e) => setFrom(e.target.value)} /></label>
+            <label>끝 <input type="date" value={to} max={today} onChange={(e) => setTo(e.target.value)} /></label>
+            <select value={filter} onChange={(e) => setFilter(e.target.value as DayFilter)} aria-label="요일">
+              {(Object.keys(DAY_FILTER_LABEL) as DayFilter[]).map((k) => <option key={k} value={k}>{DAY_FILTER_LABEL[k]}</option>)}
+            </select>
+            <button className="primary" disabled={!from || !to || from > to} onClick={() => apply({ from, to, filter })}>적용</button>
+          </div>
+          {from > to && <div className="muted small">시작일이 끝날보다 늦습니다.</div>}
+        </div>
+      )}
+    </span>
+  );
+}
+
+function PeriodNotes({ naverLoading, google }: { naverLoading: boolean; google: any }) {
+  const notes: string[] = [];
+  if (naverLoading) notes.push("네이버 기간 성과를 불러오는 중입니다…");
+  if (google?.configured && !google.byDay) notes.push("구글은 구글 애즈 스크립트를 새 버전으로 바꿔 실행해야 직접 고른 기간이 보입니다. 지금은 0으로 표시됩니다.");
+  else if (google?.byDay) notes.push("구글은 최근 60일까지만 볼 수 있습니다.");
+  notes.push("기기별·시간대별·실제 검색어 표는 최근 7일 기준으로 보여 줍니다. 자동 점검은 기간과 상관없이 현재 상태 기준입니다.");
+  return <div className="card muted small">{notes.map((t) => <div key={t}>{t}</div>)}</div>;
 }
 
 // 두 매체 키워드를 한 모양으로: 기간별 성과를 꺼내는 함수를 같이 들고 다닌다
@@ -1049,7 +1171,7 @@ function SearchTerms({ terms, sort }: { terms: any[]; sort: SortKey }) {
 // 기기별·시간대별. 시트에는 오늘·최근 7일만 있으므로 '어제'를 고르면 최근 7일을 보여준다
 function Segments({ devices, hours, range }: { devices: any[]; hours: any[]; range: Range }) {
   if (!devices.length && !hours.length) return null;
-  const r: Range = range === "yesterday" ? "last7days" : range;
+  const r: Range = range === "yesterday" || range === "custom" ? "last7days" : range;
   // 캠페인별 행을 기기·시간 단위로 합산
   const sum = (rows: any[]) => {
     const m = new Map<string, any>();
@@ -1065,7 +1187,7 @@ function Segments({ devices, hours, range }: { devices: any[]; hours: any[]; ran
   const maxClk = Math.max(1, ...hr.map((h) => h.clicks));
   return (
     <>
-      <h3>기기별 · 시간대별 · {RANGE_LABEL[r]}{range === "yesterday" ? " (어제 데이터는 없어 최근 7일 표시)" : ""}</h3>
+      <h3>기기별 · 시간대별 · {RANGE_LABEL[r]}{r !== range ? ` (${range === "yesterday" ? "어제" : "고른 기간"} 데이터는 없어 최근 7일 표시)` : ""}</h3>
       <div className="tablewrap">
         <table>
           <thead><tr><th className="l">기기</th><th>노출</th><th>클릭</th><th>CTR</th><th>평균 CPC</th><th>광고비</th><th>전환</th></tr></thead>

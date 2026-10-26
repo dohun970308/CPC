@@ -116,9 +116,10 @@ const BASE_FIELDS = ["impCnt", "clkCnt", "salesAmt", "ctr", "cpc", "ccnt"];
 // 평균 노출 순위(avgRnk)를 API가 거부하면(400) 이후로는 빼고 조회해서 나머지 성과는 계속 보이게 한다
 let rankSupported = true;
 
-async function getStatsChunk(ids: string[], preset: Preset): Promise<NaverStat[]> {
+// when: { datePreset } 또는 { timeRange: '{"since":"YYYY-MM-DD","until":"YYYY-MM-DD"}' }
+async function getStatsChunk(ids: string[], when: Record<string, string>): Promise<NaverStat[]> {
   const fetchWith = (fields: string[]) =>
-    call<{ data?: NaverStat[] }>("/stats", { ids, fields: JSON.stringify(fields), datePreset: preset });
+    call<{ data?: NaverStat[] }>("/stats", { ids, fields: JSON.stringify(fields), ...when });
   if (rankSupported) {
     try {
       return (await fetchWith([...BASE_FIELDS, "avgRnk"]))?.data ?? [];
@@ -163,7 +164,7 @@ export async function getNaverSnapshot() {
     keywords.map((k) => k.nccKeywordId),
   ].filter((g) => g.length);
   const jobs = STAT_PRESETS.flatMap((p) => idGroups.flatMap((ids) => chunks(ids, 50).map((c) => ({ p, ids: c }))));
-  const results = await pool(jobs, 4, (j) => safe(`성과(${j.p})`, () => getStatsChunk(j.ids, j.p), [] as NaverStat[]));
+  const results = await pool(jobs, 4, (j) => safe(`성과(${j.p})`, () => getStatsChunk(j.ids, { datePreset: j.p }), [] as NaverStat[]));
   const stats: Partial<Record<Preset, Record<string, NaverStat>>> = {};
   jobs.forEach((j, i) => {
     const map = (stats[j.p] ??= {});
@@ -174,3 +175,29 @@ export async function getNaverSnapshot() {
 }
 
 export type NaverSnapshot = Awaited<ReturnType<typeof getNaverSnapshot>>;
+
+// 직접 고른 기간: 연속 구간(runs)마다 합계를 받아 더한다. 평균 순위는 노출수로 가중평균.
+// /stats 는 한 요청에 같은 종류 ID만 받으므로 접두어(cmp-·grp-·nkw-)로 나눠 50개씩 보낸다.
+export async function getNaverRangeStats(ids: string[], runs: [string, string][]): Promise<Record<string, NaverStat>> {
+  const kinds = new Map<string, string[]>();
+  for (const id of ids) {
+    const k = id.split("-")[0];
+    kinds.set(k, [...(kinds.get(k) ?? []), id]);
+  }
+  const jobs = runs.flatMap(([since, until]) =>
+    [...kinds.values()].flatMap((list) => chunks(list, 50).map((c) => ({ ids: c, timeRange: JSON.stringify({ since, until }) }))),
+  );
+  const results = await pool(jobs, 4, (j) => getStatsChunk(j.ids, { timeRange: j.timeRange }));
+  const sum: Record<string, { impCnt: number; clkCnt: number; salesAmt: number; ccnt: number; rnkW: number }> = {};
+  for (const s of results.flat()) {
+    const o = (sum[s.id] ??= { impCnt: 0, clkCnt: 0, salesAmt: 0, ccnt: 0, rnkW: 0 });
+    o.impCnt += s.impCnt ?? 0;
+    o.clkCnt += s.clkCnt ?? 0;
+    o.salesAmt += s.salesAmt ?? 0;
+    o.ccnt += s.ccnt ?? 0;
+    o.rnkW += (s.avgRnk ?? 0) * (s.impCnt ?? 0);
+  }
+  return Object.fromEntries(
+    Object.entries(sum).map(([id, { rnkW, ...s }]) => [id, { id, ...s, avgRnk: s.impCnt ? rnkW / s.impCnt : undefined }]),
+  );
+}

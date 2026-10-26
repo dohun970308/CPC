@@ -45,7 +45,7 @@ async function serviceAccountToken(): Promise<string> {
 }
 
 // 이전 버전 스크립트가 만든 시트에는 negatives·daily·결제 탭이 없을 수 있다 → 있는 탭만 읽는다
-const ALL_TABS = ["meta", "campaigns", "adgroups", "keywords", "search_terms", "devices", "hours", "negatives", "daily", "결제"] as const;
+const ALL_TABS = ["meta", "campaigns", "adgroups", "keywords", "search_terms", "devices", "hours", "negatives", "daily", "결제", "daily_campaigns", "daily_adgroups", "daily_keywords"] as const;
 type Tab = (typeof ALL_TABS)[number];
 type Row = Record<string, string>;
 
@@ -180,6 +180,11 @@ export async function getGoogleSheetSnapshot(): Promise<GoogleSnapshot> {
     devices: seg(t.devices, "device"),
     hours: seg(t.hours, "hour"),
     daily: t.daily?.map((r) => ({ date: r.date, ...flat(r) })),
+    byDay: t.daily_campaigns && {
+      campaigns: t.daily_campaigns.map((r) => ({ date: r.date, id: r.id, ...flat(r) })),
+      adgroups: (t.daily_adgroups ?? []).map((r) => ({ date: r.date, id: r.id, ...flat(r) })),
+      keywords: (t.daily_keywords ?? []).map((r) => ({ date: r.date, id: r.id, ...flat(r) })),
+    },
     payments: t["결제"] ? parsePayments(t["결제"]) : undefined,
     errors: dataAt ? [] : ["시트에 아직 데이터가 없습니다. 구글 애즈 스크립트를 한 번 실행하세요."],
   };

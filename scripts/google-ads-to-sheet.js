@@ -147,6 +147,19 @@ function main() {
     return [r.segments.date].concat(metricValues(r.metrics));
   }));
 
+  // 캠페인·광고그룹·키워드 일별 성과 (최근 60일, 노출 있는 날만) — 대시보드 '기간 직접 선택'용
+  var from60 = Utilities.formatDate(new Date(Date.now() - 60 * 864e5), account.getTimeZone(), 'yyyy-MM-dd');
+  var to60 = Utilities.formatDate(new Date(), account.getTimeZone(), 'yyyy-MM-dd');
+  var by = " WHERE segments.date BETWEEN '" + from60 + "' AND '" + to60 + "' AND metrics.impressions > 0";
+  [['daily_campaigns', 'campaign.id', 'campaign', function (r) { return r.campaign.id; }],
+    ['daily_adgroups', 'ad_group.id', 'ad_group', function (r) { return r.adGroup.id; }],
+    ['daily_keywords', 'ad_group.id, ad_group_criterion.criterion_id', 'keyword_view', kwKey]].forEach(function (t) {
+    writeTab(ss, t[0], ['date', 'id'].concat(M),
+      rowsOf('SELECT segments.date, ' + t[1] + ', ' + metricFields() + ' FROM ' + t[2] + by).map(function (r) {
+        return [r.segments.date, String(t[3](r))].concat(metricValues(r.metrics));
+      }));
+  });
+
   // 결제 내역은 사람이 직접 적는 탭 — 없을 때만 만들고, 적어 둔 내용은 덮어쓰지 않는다
   if (!ss.getSheetByName('결제')) ss.insertSheet('결제').appendRow(['결제일 (예: 2026-10-18)', '결제 금액 (VAT 포함, 원)']);
 
